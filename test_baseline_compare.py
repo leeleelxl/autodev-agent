@@ -114,11 +114,26 @@ async def run_autodev(task: str):
     test_files = result.get("final_output", {}).get("test_files", [])
     review = result.get("final_output", {}).get("review", {})
 
+    # 保存所有代码文件
+    from pathlib import Path
+    output_dir = Path("autodev_generated")
+    output_dir.mkdir(exist_ok=True)
+
+    for file in code_files:
+        file_path = file.get("path", "")
+        content = file.get("content", "")
+
+        # 创建目录结构
+        full_path = output_dir / file_path
+        full_path.parent.mkdir(parents=True, exist_ok=True)
+
+        full_path.write_text(content)
+
+    # 主文件用于统计
     main_code = code_files[0].get("content", "") if code_files else ""
 
-    # 保存代码
-    with open("autodev_output.py", "w") as f:
-        f.write(main_code)
+    # 保存主文件到根目录（用于对比）
+    Path("autodev_output.py").write_text(main_code)
 
     if test_files:
         test_code = test_files[0].get("content", "")

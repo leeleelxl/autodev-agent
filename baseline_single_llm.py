@@ -2,14 +2,14 @@
 import sqlite3
 import hashlib
 import jwt
-import datetime
 import re
 import os
+from datetime import datetime, timedelta
 from functools import wraps
 from flask import Flask, request, jsonify, g
 
 DATABASE = 'auth.db'
-SECRET_KEY = os.environ.get('SECRET_KEY') or 'super-secret-key-change-in-production'
+SECRET_KEY = os.environ.get('SECRET_KEY', 'super-secret-key-change-in-production')
 
 app = Flask(__name__)
 
@@ -20,11 +20,13 @@ def init_db():
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 username TEXT UNIQUE NOT NULL,
-                password_hash TEXT NOT NULL
-            );
+                password_hash TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
         ''')
+        conn.commit()
 
-# ---------- 辅助函数 ----------
+# ---------- 工具函数 ----------
 def get_db():
     if 'db' not in g:
         g.db = sqlite3.connect(DATABASE)
@@ -38,92 +40,97 @@ def close_db(exception):
         db.close()
 
 def hash_password(password: str) -> str:
-    return hashlib.sha256(password.encode()).hexdigest()
+    return hashlib.sha256(password.encode('utf-8')).hexdigest()
 
 def validate_username(username: str):
-    if not username or len(username) < 3 or len(username) > 20:
-        raise ValueError("Username must be 3-20 characters.")
-    if not re.match(r'^\w+$', username):
-        raise ValueError("Username must contain only letters, digits, or underscore.")
+    if not re.match(r'^[a-zA-Z0-9_]{3,20}$', username):
+        raise ValueError("Username must be 3-20 characters, alphanumeric/underscore only.")
 
 def validate_password(password: str):
-    if not password or len(password) < 6:
+    if len(password) < 6:
         raise ValueError("Password must be at least 6 characters.")
 
-# ---------- 注册 ----------
-@app.route('/register', methods=['POST'])
-def register():
+def generate_token(username: str) -> str:
+    payload = {
+        'username': username,
+        'exp': datetime.utcnow() + timedelta(hours=24)
+    }
+    return jwt.encode(payload, SECRET_KEY, algorithm='HS256')
+
+def verify_token(token: str):
     try:
-        data = request.get_json(force=True)
-        username = data.get('username')
-        password = data.get('password')
+        payload = jwt.decode(token, SECRET_KEY, algorithms=['HS256'])
+        return payload['username']
+    except jwt.ExpiredSignatureError:
+        raise ValueError("Token expired")
+    except jwt.InvalidTokenError:
+        raise ValueError("Invalid token")
 
-        validate_username(username)
-        validate_password(password)
-
-        db = get_db()
-        cur = db.execute('SELECT id FROM users WHERE username = ?', (username,))
-        if cur.fetchone():
-            return jsonify({"error": "Username already exists"}), 409
-
-        password_hash = hash_password(password)
-        db.execute('INSERT INTO users (username, password_hash) VALUES (?, ?)',
-                   (username, password_hash))
-        db.commit()
-        return jsonify({"message": "User registered successfully"}), 201
-    except ValueError as ve:
-        return jsonify({"error": str(ve)}), 400
-    except Exception as e:
-        return jsonify({"error": "Registration failed"}), 500
-
-# ---------- 登录 ----------
-@app.route('/login', methods=['POST'])
-def login():
-    try:
-        data = request.get_json(force=True)
-        username = data.get('username')
-        password = data.get('password')
-
-        if not username or not password:
-            return jsonify({"error": "Username and password required"}), 400
-
-        db = get_db()
-        user = db.execute('SELECT id, password_hash FROM users WHERE username = ?', (username,)).fetchone()
-        if not user or user['password_hash'] != hash_password(password):
-            return jsonify({"error": "Invalid credentials"}), 401
-
-        payload = {
-            'user_id': user['id'],
-            'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=24)
-        }
-        token = jwt.encode(payload, SECRET_KEY, algorithm='HS256')
-        return jsonify({"token": token}), 200
-    except Exception as e:
-        return jsonify({"error": "Login failed"}), 500
-
-# ---------- Token 验证装饰器 ----------
+# ---------- 装饰器 ----------
 def token_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         auth_header = request.headers.get('Authorization')
         if not auth_header:
-            return jsonify({"error": "Authorization header missing"}), 401
+            return jsonify({'error': 'Authorization header missing'}), 401
         try:
             token = auth_header.split(" ")[1]
-            payload = jwt.decode(token, SECRET_KEY, algorithms=['HS256'])
-            g.user_id = payload['user_id']
-        except jwt.ExpiredSignatureError:
-            return jsonify({"error": "Token expired"}), 401
-        except jwt.InvalidTokenError:
-            return jsonify({"error": "Invalid token"}), 401
+            username = verify_token(token)
+            g.current_user = username
+        except (IndexError, ValueError) as e:
+            return jsonify({'error': str(e)}), 401
         return f(*args, **kwargs)
     return decorated
 
-# ---------- 受保护示例路由 ----------
+# ---------- 路由 ----------
+@app.route('/register', methods=['POST'])
+def register():
+    data = request.get_json() or {}
+    username = data.get('username', '').strip()
+    password = data.get('password', '')
+
+    try:
+        validate_username(username)
+        validate_password(password)
+    except ValueError as ve:
+        return jsonify({'error': str(ve)}), 400
+
+    db = get_db()
+    existing = db.execute('SELECT 1 FROM users WHERE username = ?', (username,)).fetchone()
+    if existing:
+        return jsonify({'error': 'Username already exists'}), 409
+
+    password_hash = hash_password(password)
+    try:
+        db.execute('INSERT INTO users (username, password_hash) VALUES (?, ?)',
+                   (username, password_hash))
+        db.commit()
+    except sqlite3.Error:
+        return jsonify({'error': 'Database error'}), 500
+
+    return jsonify({'message': 'User registered successfully'}), 201
+
+@app.route('/login', methods=['POST'])
+def login():
+    data = request.get_json() or {}
+    username = data.get('username', '').strip()
+    password = data.get('password', '')
+
+    if not username or not password:
+        return jsonify({'error': 'Username and password required'}), 400
+
+    db = get_db()
+    user = db.execute('SELECT password_hash FROM users WHERE username = ?', (username,)).fetchone()
+    if not user or user['password_hash'] != hash_password(password):
+        return jsonify({'error': 'Invalid credentials'}), 401
+
+    token = generate_token(username)
+    return jsonify({'token': token}), 200
+
 @app.route('/protected', methods=['GET'])
 @token_required
 def protected():
-    return jsonify({"message": "Access granted", "user_id": g.user_id}), 200
+    return jsonify({'message': f'Hello, {g.current_user}! This is a protected route.'}), 200
 
 # ---------- 启动 ----------
 if __name__ == '__main__':

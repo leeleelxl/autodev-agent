@@ -249,6 +249,13 @@ class Orchestrator:
                         "根据审查意见修复代码问题",
                         self.context
                     )
+
+                    # 更新代码文件
+                    improved_files = improved_response.metadata.get("files", [])
+                    if improved_files:
+                        self.context["code_files"] = improved_files
+                        print(f"  ✓ 更新了 {len(improved_files)} 个文件")
+
                     workflow_result["phases"].append({
                         "name": "improvement",
                         "result": improved_response.content
