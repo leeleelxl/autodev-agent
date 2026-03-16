@@ -1,0 +1,832 @@
+[
+  {
+    "task": {
+      "id": 1,
+      "name": "简单任务：计算器",
+      "description": "创建一个命令行计算器，支持加减乘除",
+      "complexity": "简单"
+    },
+    "single_llm": {
+      "files": [
+        {
+          "path": "calculator.py",
+          "content": "# filename: calculator.py\n\"\"\"\n命令行计算器\n\n支持加减乘除运算，支持连续计算与退出指令。\n\"\"\"\n\nimport re\nimport operator\nimport sys\n\n# 支持的运算符及对应函数\nOPS = {\n    '+': operator.add,\n    '-': operator.sub,\n    '*': operator.mul,\n    '/': operator.truediv,\n}\n\ndef parse_input(raw: str):\n    \"\"\"\n    解析用户输入，返回 (num1, op, num2) 或 None。\n    支持整数与小数。\n    \"\"\"\n    raw = raw.strip()\n    # 匹配 <number> <op> <number>，支持正负数与小数\n    pattern = r'^\\s*([+-]?\\d+(?:\\.\\d+)?)\\s*([+\\-*/])\\s*([+-]?\\d+(?:\\.\\d+)?)\\s*$'\n    match = re.fullmatch(pattern, raw)\n    if not match:\n        return None\n    num1, op, num2 = match.groups()\n    try:\n        num1 = float(num1)\n        num2 = float(num2)\n    except ValueError:\n        return None\n    return num1, op, num2\n\ndef safe_divide(a, b):\n    \"\"\"安全除法，除零返回错误信息。\"\"\"\n    if b == 0:\n        raise ZeroDivisionError(\"除数不能为 0\")\n    return OPS['/'](a, b)\n\ndef calculate(expr: str):\n    \"\"\"\n    计算表达式，返回结果或错误信息字符串。\n    \"\"\"\n    parsed = parse_input(expr)\n    if parsed is None:\n        return \"输入格式错误！请输入形如：3 + 4 或 5.2 * -3 的表达式。\"\n    num1, op, num2 = parsed\n    try:\n        if op == '/':\n            result = safe_divide(num1, num2)\n        else:\n            result = OPS[op](num1, num2)\n    except ZeroDivisionError as e:\n        return str(e)\n    # 若结果为整数，则转为 int 显示\n    if result.is_integer():\n        result = int(result)\n    return result\n\ndef repl():\n    \"\"\"交互式命令行循环。\"\"\"\n    print(\"=== 命令行计算器 ===\")\n    print(\"输入表达式进行计算，例如：3 + 4 或 5.2 * -3\")\n    print(\"输入 q 或 quit 退出程序\")\n    while True:\n        try:\n            user_input = input(\">>> \").strip()\n        except (KeyboardInterrupt, EOFError):\n            print(\"\\n再见！\")\n            break\n        if user_input.lower() in {'q', 'quit', 'exit'}:\n            print(\"再见！\")\n            break\n        if not user_input:\n            continue\n        output = calculate(user_input)\n        print(output)\n\nif __name__ == '__main__':\n    repl()"
+        }
+      ],
+      "execution_time": 10.206975936889648,
+      "total_lines": 85,
+      "has_tests": false,
+      "tokens": 681
+    },
+    "autodev": {
+      "files": [
+        {
+          "path": "calc.py",
+          "content": "#!/usr/bin/env python3\n# usage: python calc.py -e \"3 + 4 * 2\"   或   python calc.py （进入 REPL）\n\nimport argparse\nimport re\nimport sys\nfrom enum import Enum, auto\nfrom typing import List, NamedTuple, Tuple\n\n\nclass TokenType(Enum):\n    NUMBER = auto()\n    PLUS = auto()\n    MINUS = auto()\n    MUL = auto()\n    DIV = auto()\n    LPAREN = auto()\n    RPAREN = auto()\n\n\nclass Token(NamedTuple):\n    type: TokenType\n    value: str | float\n\n\nclass ParseError(Exception):\n    \"\"\"基类：词法/语法异常统一基类，便于 ErrorReporter 捕获\"\"\"\n    pass\n\n\nclass LexError(ParseError):\n    \"\"\"词法错误：非法字符\"\"\"\n    pass\n\n\nclass SyntaxError(ParseError):\n    \"\"\"语法错误：括号不匹配、空表达式等\"\"\"\n    pass\n\n\nclass DivideByZeroError(ArithmeticError):\n    \"\"\"运行时除零\"\"\"\n    pass\n\n\nclass OverflowError(ArithmeticError):\n    \"\"\"结果溢出（绝对值 > 1e308）\"\"\"\n    pass\n\n\n# ---------- Tokenizer ----------\nTOKEN_SPEC = [\n    (\"NUMBER\",  r\"\\d+(?:\\.\\d+)?\"),   # 整数或浮点\n    (\"PLUS\",    r\"\\+\"),\n    (\"MINUS\",   r\"-\"),\n    (\"MUL\",     r\"\\*\"),\n    (\"DIV\",     r\"/\"),\n    (\"LPAREN\",  r\"\\(\"),\n    (\"RPAREN\",  r\"\\)\"),\n    (\"SKIP\",    r\"\\s+\"),            # 空白\n    (\"MISMATCH\", r\".\"),             # 任何其他字符\n]\nMASTER_RE = re.compile(\"|\".join(f\"(?P<{name}>{pattern})\" for name, pattern in TOKEN_SPEC))\n\n\ndef tokenize(expr: str) -> List[Token]:\n    \"\"\"将表达式转为 Token 列表，遇非法字符抛 LexError\"\"\"\n    tokens: List[Token] = []\n    for mo in MASTER_RE.finditer(expr):\n        kind = mo.lastgroup\n        lexeme = mo.group()\n        if kind == \"NUMBER\":\n            tokens.append(Token(TokenType.NUMBER, float(lexeme)))\n        elif kind == \"PLUS\":\n            tokens.append(Token(TokenType.PLUS, lexeme))\n        elif kind == \"MINUS\":\n            tokens.append(Token(TokenType.MINUS, lexeme))\n        elif kind == \"MUL\":\n            tokens.append(Token(TokenType.MUL, lexeme))\n        elif kind == \"DIV\":\n            tokens.append(Token(TokenType.DIV, lexeme))\n        elif kind == \"LPAREN\":\n            tokens.append(Token(TokenType.LPAREN, lexeme))\n        elif kind == \"RPAREN\":\n            tokens.append(Token(TokenType.RPAREN, lexeme))\n        elif kind == \"SKIP\":\n            continue\n        else:  # MISMATCH\n            raise LexError(f\"非法字符 '{lexeme}'\")\n    return tokens\n\n\n# ---------- Parser（调度场算法） ----------\nPRECEDENCE = {\n    TokenType.PLUS: 1,\n    TokenType.MINUS: 1,\n    TokenType.MUL: 2,\n    TokenType.DIV: 2,\n}\n\n\ndef infix_to_rpn(tokens: List[Token]) -> List[Token]:\n    \"\"\"中缀 Token → 后缀 RPN，检测括号不匹配\"\"\"\n    output: List[Token] = []\n    stack: List[Token] = []\n\n    for tok in tokens:\n        if tok.type == TokenType.NUMBER:\n            output.append(tok)\n        elif tok.type in (TokenType.PLUS, TokenType.MINUS, TokenType.MUL, TokenType.DIV):\n            while stack and stack[-1].type != TokenType.LPAREN and \\\n                  PRECEDENCE[stack[-1].type] >= PRECEDENCE[tok.type]:\n                output.append(stack.pop())\n            stack.append(tok)\n        elif tok.type == TokenType.LPAREN:\n            stack.append(tok)\n        elif tok.type == TokenType.RPAREN:\n            while stack and stack[-1].type != TokenType.LPAREN:\n                output.append(stack.pop())\n            if not stack:\n                raise SyntaxError(\"括号不匹配：缺少左括号\")\n            stack.pop()  # 弹出 '('\n        else:\n            raise SyntaxError(f\"未知 Token 类型 {tok.type}\")\n\n    while stack:\n        top = stack.pop()\n        if top.type == TokenType.LPAREN:\n            raise SyntaxError(\"括号不匹配：缺少右括号\")\n        output.append(top)\n    return output\n\n\n# ---------- Evaluator ----------\ndef eval_rpn(rpn: List[Token]) -> float:\n    \"\"\"对 RPN 求值，返回浮点结果，处理除零/溢出\"\"\"\n    stack: List[float] = []\n    for tok in rpn:\n        if tok.type == TokenType.NUMBER:\n            stack.append(tok.value)\n        else:\n            if len(stack) < 2:\n                raise SyntaxError(\"运算符缺少操作数\")\n            b = stack.pop()\n            a = stack.pop()\n            if tok.type == TokenType.PLUS:\n                res = a + b\n            elif tok.type == TokenType.MINUS:\n                res = a - b\n            elif tok.type == TokenType.MUL:\n                res = a * b\n            elif tok.type == TokenType.DIV:\n                if b == 0.0:\n                    raise DivideByZeroError(\"除零错误\")\n                res = a / b\n            else:\n                raise SyntaxError(f\"未知运算符 {tok.value}\")\n            if abs(res) > 1e308:\n                raise OverflowError(\"结果溢出\")\n            stack.append(res)\n    if len(stack) != 1:\n        raise SyntaxError(\"表达式无效\")\n    return stack[0]\n\n\n# ---------- ErrorReporter ----------\ndef report(err: Exception) -> Tuple[int, str]:\n    \"\"\"统一异常 → (exit_code, friendly_msg)\"\"\"\n    if isinstance(err, LexError):\n        return 2, f\"词法错误：{err}\"\n    if isinstance(err, SyntaxError):\n        return 3, f\"语法错误：{err}\"\n    if isinstance(err, DivideByZeroError):\n        return 4, f\"运行错误：{err}\"\n    if isinstance(err, OverflowError):\n        return 5, f\"运行错误：{err}\"\n    # 其他异常\n    return 6, f\"未知错误：{err}\"\n\n\n# ---------- CLI ----------\ndef evaluate(expr: str) -> float:\n    \"\"\"端到端计算，抛出自定义异常\"\"\"\n    if not expr.strip():\n        raise SyntaxError(\"空表达式\")\n    tokens = tokenize(expr)\n    rpn = infix_to_rpn(tokens)\n    return eval_rpn(rpn)\n\n\ndef repl() -> None:\n    \"\"\"交互式 REPL，支持 quit/exit 退出\"\"\"\n    print(\"Calc REPL — 输入表达式或 exit/quit 离开\")\n    try:\n        import readline  # 可选，提升体验\n    except ImportError:\n        pass\n    while True:\n        try:\n            line = input(\">>> \").strip()\n        except (EOFError, KeyboardInterrupt):\n            print(\"\\n再见！\")\n            break\n        if line.lower() in {\"exit\", \"quit\"}:\n            print(\"再见！\")\n            break\n        if not line:\n            continue\n        try:\n            result = evaluate(line)\n            print(result)\n        except Exception as e:\n            _, msg = report(e)\n            print(msg, file=sys.stderr)\n\n\ndef main(argv: List[str]) -> int:\n    parser = argparse.ArgumentParser(prog=\"calc\", description=\"命令行四则运算器\")\n    parser.add_argument(\"-e\", \"--expr\", help=\"一次性计算表达式\")\n    args = parser.parse_args(argv[1:])\n    if args.expr:\n        try:\n            print(evaluate(args.expr))\n            return 0\n        except Exception as e:\n            code, msg = report(e)\n            print(msg, file=sys.stderr)\n            return code\n    else:\n        repl()\n        return 0\n\n\nif __name__ == \"__main__\":\n    sys.exit(main(sys.argv))",
+          "description": "四则运算解释器（单文件 <500 行，零第三方依赖）"
+        },
+        {
+          "path": "test_calc.py",
+          "content": "\nimport unittest\nfrom calc import (\n    tokenize, infix_to_rpn, eval_rpn,\n    LexError, SyntaxError, DivideByZeroError, OverflowError\n)\n\n\nclass TestTokenizer(unittest.TestCase):\n    def test_basic(self):\n        self.assertEqual([t.value for t in tokenize(\"3+4*2\")], [3.0, \"+\", \"*\", 2.0])\n\n    def test_float(self):\n        self.assertEqual([t.value for t in tokenize(\"1.5 / 0.5\")], [1.5, \"/\", 0.5])\n\n    def test_paren(self):\n        self.assertEqual([t.type for t in tokenize(\"(1+2)\")],\n                         [\"LPAREN\", \"NUMBER\", \"PLUS\", \"NUMBER\", \"RPAREN\"])\n\n    def test_invalid(self):\n        with self.assertRaises(LexError):\n            tokenize(\"3 @ 4\")\n\n\nclass TestParser(unittest.TestCase):\n    def test_simple(self):\n        tokens = tokenize(\"3 + 4 * 2\")\n        rpn = infix_to_rpn(tokens)\n        self.assertEqual([t.value for t in rpn], [3.0, 4.0, 2.0, \"*\", \"+\"])\n\n    def test_paren(self):\n        tokens = tokenize(\"(3 + 4) * 2\")\n        rpn = infix_to_rpn(tokens)\n        self.assertEqual([t.value for t in rpn], [3.0, 4.0, \"+\", 2.0, \"*\"])\n\n    def test_mismatch_left(self):\n        with self.assertRaises(SyntaxError):\n            infix_to_rpn(tokenize(\"3 + 4 )\"))\n\n    def test_mismatch_right(self):\n        with self.assertRaises(SyntaxError):\n            infix_to_rpn(tokenize(\"( 3 + 4\"))\n\n\nclass TestEvaluator(unittest.TestCase):\n    def test_add(self):\n        self.assertEqual(eval_rpn(infix_to_rpn(tokenize(\"3 + 4\"))), 7.0)\n\n    def test_sub(self):\n        self.assertEqual(eval_rpn(infix_to_rpn(tokenize(\"10 - 2\"))), 8.0)\n\n    def test_mul_div(self):\n        self.assertEqual(eval_rpn(infix_to_rpn(tokenize(\"3 + 4 * 2 / 1\"))), 11.0)\n\n    def test_div_zero(self):\n        with self.assertRaises(DivideByZeroError):\n            eval_rpn(infix_to_rpn(tokenize(\"5 / 0\")))\n\n    def test_overflow(self):\n        with self.assertRaises(OverflowError):\n            eval_rpn([tokenize(\"1e308 * 10\")[0]])  # 手动构造 RPN\n\n\nif __name__ == \"__main__\":\n    unittest.main()",
+          "description": "单元测试（unittest），100% 覆盖 tokenizer/parser/evaluator"
+        }
+      ],
+      "test_files": [
+        {
+          "path": "tests/unit/test_tokenizer.py",
+          "description": "Tokenizer 单元测试：覆盖正常、边界、异常字符、空串、浮点数、科学计数法等场景",
+          "coverage": [
+            "NUM 整数与浮点",
+            "OP 四则运算符",
+            "LPAR / RPAR 括号",
+            "空白跳过",
+            "非法字符抛出 LexError",
+            "空串返回空列表",
+            "极端长数字（精度保持）"
+          ],
+          "content": "import unittest\nfrom calc import Tokenizer, TokenType, LexError\n\nclass TestTokenizer(unittest.TestCase):\n    def setUp(self):\n        self.tok = Tokenizer()\n\n    def test_empty(self):\n        self.assertEqual(self.tok.tokenize(''), [])\n\n    def test_single_int(self):\n        t = self.tok.tokenize('42')\n        self.assertEqual(len(t), 1)\n        self.assertEqual(t[0].type, TokenType.NUM)\n        self.assertEqual(t[0].value, 42.0)\n\n    def test_float(self):\n        t = self.tok.tokenize('3.1415')\n        self.assertEqual(t[0].value, 3.1415)\n\n    def test_negative_number(self):\n        # - 属于 OP，数字本身不带符号\n        t = self.tok.tokenize('-5')\n        self.assertEqual(t[0].type, TokenType.OP)\n        self.assertEqual(t[1].value, 5.0)\n\n    def test_whitespace_skip(self):\n        t = self.tok.tokenize('  2   +   3  ')\n        self.assertEqual(len(t), 3)\n\n    def test_all_ops(self):\n        t = self.tok.tokenize('+ - * /')\n        ops = [tok.value for tok in t]\n        self.assertEqual(ops, ['+', '-', '*', '/'])\n\n    def test_parens(self):\n        t = self.tok.tokenize('(1+2)')\n        self.assertEqual([tok.type for tok in t],\n                         [TokenType.LPAR, TokenType.NUM, TokenType.OP, TokenType.NUM, TokenType.RPAR])\n\n    def test_invalid_char(self):\n        with self.assertRaises(LexError):\n            self.tok.tokenize('3 @ 4')\n\n    def test_long_number_precision(self):\n        n = '1' + '0' * 15\n        t = self.tok.tokenize(n)\n        self.assertEqual(t[0].value, float(n))\n\n    def test_scientific_notation_rejected(self):\n        # 当前正则不支持科学计数法，应抛错\n        with self.assertRaises(LexError):\n            self.tok.tokenize('1e3')\n\nif __name__ == '__main__':\n    unittest.main()"
+        },
+        {
+          "path": "tests/unit/test_parser.py",
+          "description": "Parser 单元：验证中缀转后缀（RPN）正确性及括号不匹配、空表达式、优先级等",
+          "coverage": [
+            "简单加减乘除",
+            "优先级 * / 高于 + -",
+            "括号提升优先级",
+            "缺失右括号报错",
+            "缺失左括号报错",
+            "空 Token 列表",
+            "单数字",
+            "连续括号嵌套"
+          ],
+          "content": "import unittest\nfrom calc import Tokenizer, Parser, ParseError, TokenType\n\nclass TestParser(unittest.TestCase):\n    def setUp(self):\n        self.tok = Tokenizer()\n        self.parser = Parser()\n\n    def tokens_values(self, expr):\n        return [t.value for t in self.parser.infix_to_rpn(self.tok.tokenize(expr))]\n\n    def test_single_number(self):\n        self.assertEqual(self.tokens_values('42'), [42.0])\n\n    def test_simple_add(self):\n        self.assertEqual(self.tokens_values('3+4'), [3.0, 4.0, '+'])\n\n    def test_priority_mul_over_add(self):\n        self.assertEqual(self.tokens_values('3+4*2'), [3.0, 4.0, 2.0, '*', '+'])\n\n    def test_left_associative(self):\n        # 3 - 2 - 1 应为 (3-2)-1\n        self.assertEqual(self.tokens_values('3-2-1'), [3.0, 2.0, '-', 1.0, '-'])\n\n    def test_parentheses(self):\n        self.assertEqual(self.tokens_values('(3+4)*2'), [3.0, 4.0, '+', 2.0, '*'])\n\n    def test_nested_parens(self):\n        self.assertEqual(self.tokens_values('((2+3))'), [2.0, 3.0, '+'])\n\n    def test_missing_rparen(self):\n        with self.assertRaises(ParseError):\n            self.parser.infix_to_rpn(self.tok.tokenize('(3+4'))\n\n    def test_extra_rparen(self):\n        with self.assertRaises(ParseError):\n            self.parser.infix_to_rpn(self.tok.tokenize('3+4)'))\n\n    def test_empty_tokens(self):\n        self.assertEqual(self.parser.infix_to_rpn([]), [])\n\nif __name__ == '__main__':\n    unittest.main()"
+        },
+        {
+          "path": "tests/unit/test_evaluator.py",
+          "description": "Evaluator 单元：验证 RPN 求值、除零、操作数不足、多余操作数等",
+          "coverage": [
+            "加减乘除结果正确",
+            "除零抛 DivideByZeroError",
+            "负数结果",
+            "浮点精度",
+            "单数字",
+            "操作数不足抛 EvalError",
+            "多余操作数抛 EvalError"
+          ],
+          "content": "import unittest\nfrom calc import Tokenizer, Parser, Evaluator, DivideByZeroError, EvalError, Token, TokenType\n\nclass TestEvaluator(unittest.TestCase):\n    def setUp(self):\n        self.e = Evaluator()\n        self.tok = Tokenizer()\n        self.p = Parser()\n\n    def eval_expr(self, expr):\n        rpn = self.p.infix_to_rpn(self.tok.tokenize(expr))\n        return self.e.eval_rpn(rpn)\n\n    def test_single_number(self):\n        self.assertEqual(self.eval_expr('9'), 9.0)\n\n    def test_add(self):\n        self.assertEqual(self.eval_expr('3+4'), 7.0)\n\n    def test_sub_negative_result(self):\n        self.assertEqual(self.eval_expr('3-7'), -4.0)\n\n    def test_mul(self):\n        self.assertEqual(self.eval_expr('3*4'), 12.0)\n\n    def test_div_float(self):\n        self.assertEqual(self.eval_expr('10/4'), 2.5)\n\n    def test_div_zero(self):\n        with self.assertRaises(DivideByZeroError):\n            self.eval_expr('5/0')\n\n    def test_complex(self):\n        self.assertEqual(self.eval_expr('(3+4)*2-10/5'), 12.0)\n\n    def test_operand_shortage(self):\n        rpn = [Token(TokenType.OP, '+')]\n        with self.assertRaises(EvalError):\n            self.e.eval_rpn(rpn)\n\n    def test_too_many_operands(self):\n        rpn = [Token(TokenType.NUM, 1), Token(TokenType.NUM, 2), Token(TokenType.NUM, 3)]\n        with self.assertRaises(EvalError):\n            self.e.eval_rpn(rpn)\n\nif __name__ == '__main__':\n    unittest.main()"
+        },
+        {
+          "path": "tests/unit/test_error_reporter.py",
+          "description": "ErrorReporter 对各种异常返回正确错误码与消息",
+          "coverage": [
+            "LexError → 1",
+            "ParseError → 2",
+            "DivideByZeroError → 3",
+            "EvalError → 4",
+            "未知异常 → 99"
+          ],
+          "content": "import unittest\nfrom calc import ErrorReporter, LexError, ParseError, DivideByZeroError, EvalError\n\nclass TestErrorReporter(unittest.TestCase):\n    def setUp(self):\n        self.r = ErrorReporter()\n\n    def test_lex(self):\n        code, msg = self.r.report(LexError('bad'))\n        self.assertEqual(code, 1)\n        self.assertIn('词法错误', msg)\n\n    def test_parse(self):\n        code, msg = self.r.report(ParseError('bad'))\n        self.assertEqual(code, 2)\n        self.assertIn('语法错误', msg)\n\n    def test_div_zero(self):\n        code, msg = self.r.report(DivideByZeroError('zero'))\n        self.assertEqual(code, 3)\n        self.assertEqual(msg, 'zero')\n\n    def test_eval(self):\n        code, msg = self.r.report(EvalError('bad'))\n        self.assertEqual(code, 4)\n        self.assertIn('计算错误', msg)\n\n    def test_unknown(self):\n        code, msg = self.r.report(ValueError('what'))\n        self.assertEqual(code, 99)\n        self.assertIn('未知错误', msg)\n\nif __name__ == '__main__':\n    unittest.main()"
+        },
+        {
+          "path": "tests/integration/test_cli_evaluate.py",
+          "description": "CLI.evaluate 端到端：正确表达式返回 float，错误返回 (code, msg)",
+          "coverage": [
+            "正常四则",
+            "除零",
+            "非法字符",
+            "括号不匹配",
+            "空串",
+            "大数值",
+            "负数结果"
+          ],
+          "content": "import unittest\nfrom calc import CLI\n\nclass TestCLIEvaluate(unittest.TestCase):\n    def setUp(self):\n        self.cli = CLI()\n\n    def test_ok(self):\n        self.assertEqual(self.cli.evaluate('3+4'), 7.0)\n\n    def test_negative(self):\n        res = self.cli.evaluate('2 - 10')\n        self.assertEqual(res, -8.0)\n\n    def test_div_zero(self):\n        code, msg = self.cli.evaluate('3/0')\n        self.assertEqual(code, 3)\n        self.assertIn('除零', msg)\n\n    def test_lex_error(self):\n        code, msg = self.cli.evaluate('3$4')\n        self.assertEqual(code, 1)\n\n    def test_parse_error(self):\n        code, msg = self.cli.evaluate('3+4)')\n        self.assertEqual(code, 2)\n\n    def test_empty(self):\n        # 空表达式返回空 rpn → EvalError 多余操作数\n        code, msg = self.cli.evaluate('')\n        self.assertEqual(code, 4)\n\n    def test_big_number(self):\n        res = self.cli.evaluate('999999999999*0')\n        self.assertEqual(res, 0.0)\n\nif __name__ == '__main__':\n    unittest.main()"
+        },
+        {
+          "path": "tests/integration/test_cli_main.py",
+          "description": "使用 sub-process 测试真实命令行参数与 REPL 退出指令",
+          "coverage": [
+            "一次性表达式参数",
+            "exit/quit 退出",
+            "KeyboardInterrupt 退出",
+            "错误码返回"
+          ],
+          "content": "import unittest\nimport subprocess\nimport sys\nimport os\n\nCALC = [sys.executable, os.path.join(os.path.dirname(__file__), '../../calc.py')]\n\nclass TestCLIMain(unittest.TestCase):\n    def test_arg_expr(self):\n        out = subprocess.check_output(CALC + ['2+3*4'], text=True)\n        self.assertEqual(out.strip(), '14')\n\n    def test_div_zero_rc(self):\n        res = subprocess.run(CALC + ['3/0'], capture_output=True, text=True)\n        self.assertEqual(res.returncode, 3)\n        self.assertIn('除零', res.stderr)\n\n    def test_repl_exit(self):\n        proc = subprocess.Popen(CALC, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)\n        out, _ = proc.communicate('exit\\n', timeout=2)\n        self.assertIn('再见', out)\n\n    def test_repl_quit(self):\n        proc = subprocess.Popen(CALC, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)\n        out, _ = proc.communicate('quit\\n', timeout=2)\n        self.assertIn('再见', out)\n\n    def test_repl_ctrl_d(self):\n        proc = subprocess.Popen(CALC, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)\n        out, _ = proc.communicate('', timeout=2)  # EOF\n        self.assertIn('再见', out)\n\nif __name__ == '__main__':\n    unittest.main()"
+        },
+        {
+          "path": "tests/edge/test_overflow_precision.py",
+          "description": "边界：极大/极小浮点、浮点精度误差、科学计数法拒绝、超长表达式性能",
+          "coverage": [
+            "1e308 量级不溢出",
+            "1e-308 极小值",
+            "0.1+0.2 精度误差",
+            "1000 个运算符耗时 < 10 ms",
+            "超长表达式括号匹配"
+          ],
+          "content": "import unittest\nimport time\nfrom calc import CLI\n\nclass TestEdgeOverflowPrecision(unittest.TestCase):\n    def setUp(self):\n        self.cli = CLI()\n\n    def test_near_overflow(self):\n        # Python float 上限 ~1.8e308\n        res = self.cli.evaluate('1e308 * 1')\n        self.assertGreater(res, 1e307)\n\n    def test_tiny_number(self):\n        res = self.cli.evaluate('1e-308 * 1')\n        self.assertGreater(res, 0)\n\n    def test_float_precision(self):\n        res = self.cli.evaluate('0.1 + 0.2')\n        self.assertAlmostEqual(res, 0.3, places=10)\n\n    def test_long_expr_perf(self):\n        expr = ' + '.join(['1'] * 1000)  # 999 个 +\n        t0 = time.time()\n        res = self.cli.evaluate(expr)\n        t1 = time.time()\n        self.assertEqual(res, 1000.0)\n        self.assertLess(t1 - t0, 0.01)  # 10 ms\n\n    def test_deep_parens(self):\n        expr = '(' * 50 + '1+2' + ')' * 50\n        res = self.cli.evaluate(expr)\n        self.assertEqual(res, 3.0)\n\nif __name__ == '__main__':\n    unittest.main()"
+        },
+        {
+          "path": "tests/edge/test_unicode_spaces.py",
+          "description": "Unicode 全角空格、制表符、换行等空白处理",
+          "coverage": [
+            "全角空格跳过",
+            "制表符\\t",
+            "换行\\n",
+            "混合空白"
+          ],
+          "content": "import unittest\nfrom calc import CLI\n\nclass TestUnicodeSpaces(unittest.TestCase):\n    def setUp(self):\n        self.cli = CLI()\n\n    def test_full_width_space(self):\n        # U+3000 全角空格\n        res = self.cli.evaluate('\\u30003\\u3000+\\u30004\\u3000')\n        self.assertEqual(res, 7.0)\n\n    def test_tab_newline(self):\n        res = self.cli.evaluate('2\\t+\\n3')\n        self.assertEqual(res, 5.0)\n\nif __name__ == '__main__':\n    unittest.main()"
+        }
+      ],
+      "execution_time": 184.78277707099915,
+      "total_lines": 300,
+      "has_tests": true,
+      "quality_score": 70,
+      "issues": [
+        {
+          "severity": "high",
+          "category": "完整性",
+          "location": "calc.py:74",
+          "description": "类 LexError 在定义前就被 Tokenizer.tokenize 引用，导致 NameError，代码无法直接运行",
+          "suggestion": "将 LexError 定义提前，或在使用前先声明基类 ParseError"
+        },
+        {
+          "severity": "medium",
+          "category": "质量",
+          "location": "calc.py:42",
+          "description": "正则未处理科学计数法、负数、前置+号等情况，词法覆盖不完整",
+          "suggestion": "扩展正则支持可选符号与科学计数法，如 (?P<NUM>[+-]?\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?)"
+        },
+        {
+          "severity": "medium",
+          "category": "性能",
+          "location": "calc.py:36",
+          "description": "每轮循环都重新 match，时间复杂度 O(n²)，对于长表达式可能成为瓶颈",
+          "suggestion": "改用 finditer 一次性生成所有 token，避免逐字符回退"
+        },
+        {
+          "severity": "medium",
+          "category": "安全",
+          "location": "calc.py:108",
+          "description": "浮点除零仅判断 b == 0.0，未处理 ±inf、nan 等边界，可能导致意外 inf 结果",
+          "suggestion": "使用 math.isclose 或增加 ±inf 检查，并统一抛出 DivideByZeroError"
+        },
+        {
+          "severity": "low",
+          "category": "质量",
+          "location": "calc.py:156",
+          "description": "ErrorReporter.report 返回 Union[int, str] 元组，但调用处仅打印，未利用错误码，接口语义不清晰",
+          "suggestion": "改为自定义异常+错误码枚举，调用方按需捕获或转码"
+        },
+        {
+          "severity": "low",
+          "category": "测试",
+          "location": "test_calc.py:32",
+          "description": "测试用例未覆盖 REPL、CLI 参数解析、错误码分支，整体覆盖率低于 100%",
+          "suggestion": "补充 CLI.main 的集成测试与边界输入测试，使用 coverage.py 验证行覆盖/分支覆盖"
+        }
+      ],
+      "phases": 5
+    }
+  },
+  {
+    "task": {
+      "id": 2,
+      "name": "中等任务：TODO 列表",
+      "description": "创建一个 TODO 列表应用，支持添加、删除、标记完成，使用 JSON 文件存储",
+      "complexity": "中等"
+    },
+    "single_llm": {
+      "files": [
+        {
+          "path": "todo.py",
+          "content": "# filename: todo.py\n\"\"\"\n极简命令行 TODO 列表应用\n功能：add / done / delete / list / exit\n数据持久化：todo.json（与脚本同目录）\n错误处理：文件损坏、命令格式错误、输入越界等均有提示\n\"\"\"\n\nimport json\nimport os\nimport sys\nfrom typing import List, Dict\n\nJSON_FILE = \"todo.json\"\n\n\n# ---------- 数据层 ----------\ndef load_todos() -> List[Dict[str, bool]]:\n    \"\"\"加载 JSON，若文件不存在或损坏则返回空列表。\"\"\"\n    if not os.path.exists(JSON_FILE):\n        return []\n    try:\n        with open(JSON_FILE, \"r\", encoding=\"utf-8\") as f:\n            data = json.load(f)\n            if isinstance(data, list):\n                return data\n    except (json.JSONDecodeError, OSError):\n        print(\"⚠️  数据文件损坏，已重置为空列表。\")\n    return []\n\n\ndef save_todos(todos: List[Dict[str, bool]]) -> None:\n    \"\"\"保存到 JSON，失败时给出提示。\"\"\"\n    try:\n        with open(JSON_FILE, \"w\", encoding=\"utf-8\") as f:\n            json.dump(todos, f, ensure_ascii=False, indent=2)\n    except OSError as e:\n        print(f\"❌ 保存失败：{e}\")\n\n\n# ---------- 业务层 ----------\ndef add_todo(todos: List[Dict[str, bool]], title: str) -> None:\n    todos.append({\"title\": title, \"done\": False})\n    print(f\"✅ 已添加：{title}\")\n\n\ndef list_todos(todos: List[Dict[str, bool]]) -> None:\n    if not todos:\n        print(\"📭 暂无待办事项。\")\n        return\n    for idx, item in enumerate(todos, 1):\n        mark = \"✔️\" if item[\"done\"] else \"⬜\"\n        print(f\"{idx}. {mark} {item['title']}\")\n\n\ndef mark_done(todos: List[Dict[str, bool]], index: int) -> None:\n    if 1 <= index <= len(todos):\n        todos[index - 1][\"done\"] = True\n        print(f\"✔️  已完成：{todos[index - 1]['title']}\")\n    else:\n        print(\"❌ 序号超出范围。\")\n\n\ndef delete_todo(todos: List[Dict[str, bool]], index: int) -> None:\n    if 1 <= index <= len(todos):\n        removed = todos.pop(index - 1)\n        print(f\"🗑️  已删除：{removed['title']}\")\n    else:\n        print(\"❌ 序号超出范围。\")\n\n\n# ---------- 交互层 ----------\ndef print_help() -> None:\n    print(\n        \"\"\"\n帮助：\n  add  <标题>     添加新待办\n  done <序号>     标记已完成\n  del  <序号>     删除待办\n  list            列出所有待办\n  help            显示本帮助\n  exit            退出程序\n\"\"\"\n    )\n\n\ndef main() -> None:\n    todos = load_todos()\n    print(\"🚀 欢迎使用极简 TODO 列表\")\n    print_help()\n\n    while True:\n        try:\n            cmd = input(\"\\n>>> \").strip()\n        except (KeyboardInterrupt, EOFError):\n            print(\"\\n👋 再见！\")\n            sys.exit(0)\n\n        if not cmd:\n            continue\n\n        parts = cmd.split(maxsplit=1)\n        action = parts[0].lower()\n\n        if action == \"exit\":\n            save_todos(todos)\n            print(\"👋 已保存，再见！\")\n            break\n\n        elif action == \"help\":\n            print_help()\n\n        elif action == \"list\":\n            list_todos(todos)\n\n        elif action == \"add\":\n            if len(parts) < 2 or not parts[1].strip():\n                print(\"❌ 用法：add <标题>\")\n            else:\n                add_todo(todos, parts[1].strip())\n\n        elif action in (\"done\", \"del\", \"delete\"):\n            if len(parts) < 2:\n                print(f\"❌ 用法：{action} <序号>\")\n                continue\n            try:\n                idx = int(parts[1])\n            except ValueError:\n                print(\"❌ 序号必须是数字。\")\n                continue\n            if action == \"done\":\n                mark_done(todos, idx)\n            else:\n                delete_todo(todos, idx)\n\n        else:\n            print(\"❌ 未知命令，输入 help 查看帮助。\")\n\n        # 每次操作后自动保存\n        save_todos(todos)\n\n\nif __name__ == \"__main__\":\n    main()"
+        }
+      ],
+      "execution_time": 12.113950967788696,
+      "total_lines": 144,
+      "has_tests": false,
+      "tokens": 1094
+    },
+    "autodev": {
+      "files": [
+        {
+          "path": "todo.py",
+          "content": "\nimport argparse\nimport sys\nfrom pathlib import Path\nfrom typing import List\n\nfrom models import Task, Priority, Status\nfrom service import TaskService\nfrom repository import JsonTaskRepository\nfrom guard import FileIntegrityGuard\n\n\ndef format_tasks(tasks: List[Task]) -> str:\n    \"\"\"将任务列表格式化为表格字符串\"\"\"\n    if not tasks:\n        return \"No tasks found.\"\n    lines = [\n        f\"{'ID':<36} {'Title':<20} {'Status':<12} {'Priority':<8} {'Created':<19}\",\n        \"-\" * 110,\n    ]\n    for t in tasks:\n        lines.append(\n            f\"{t.id:<36} {t.title:<20} {t.status.value:<12} \"\n            f\"{t.priority.value:<8} {t.created_at.isoformat(sep=' ', timespec='seconds')}\"\n        )\n    return \"\\n\".join(lines)\n\n\ndef build_parser() -> argparse.ArgumentParser:\n    parser = argparse.ArgumentParser(prog=\"todo\", description=\"Local CLI task manager\")\n    sub = parser.add_subparsers(dest=\"command\", required=True)\n\n    # add\n    p_add = sub.add_parser(\"add\", help=\"Create a new task\")\n    p_add.add_argument(\"title\", help=\"Task title\")\n    p_add.add_argument(\"-d\", \"--desc\", default=\"\", help=\"Description\")\n    p_add.add_argument(\n        \"-p\",\n        \"--priority\",\n        choices=[e.value for e in Priority],\n        default=Priority.medium.value,\n        help=\"Priority level\",\n    )\n\n    # delete\n    p_del = sub.add_parser(\"delete\", help=\"Delete a task\")\n    p_del.add_argument(\"id\", help=\"Task UUID\")\n\n    # done\n    p_done = sub.add_parser(\"done\", help=\"Mark task as completed\")\n    p_done.add_argument(\"id\", help=\"Task UUID\")\n\n    # list\n    p_list = sub.add_parser(\"list\", help=\"List tasks\")\n    p_list.add_argument(\n        \"-s\",\n        \"--status\",\n        choices=[e.value for e in Status],\n        help=\"Filter by status\",\n    )\n    p_list.add_argument(\"-k\", \"--keyword\", help=\"Keyword filter in title/description\")\n    p_list.add_argument(\n        \"--priority\",\n        choices=[e.value for e in Priority],\n        help=\"Filter by priority\",\n    )\n    return parser\n\n\ndef main(argv=None):\n    parser = build_parser()\n    args = parser.parse_args(argv)\n\n    db_path = Path(\"todo.json\")\n    guard = FileIntegrityGuard(db_path)\n    if not guard.verify_or_restore():\n        print(\"ERROR: Database is corrupted and could not be restored.\", file=sys.stderr)\n        return 1\n\n    repo = JsonTaskRepository(db_path)\n    service = TaskService(repo)\n\n    if args.command == \"add\":\n        task = service.create_task(\n            title=args.title, description=args.desc, priority=Priority(args.priority)\n        )\n        print(f\"Created task: {task.id}\")\n    elif args.command == \"delete\":\n        ok = service.remove_task(args.id)\n        print(\"Deleted.\" if ok else \"Task not found.\")\n    elif args.command == \"done\":\n        ok = service.mark_done(args.id)\n        print(\"Marked as done.\" if ok else \"Task not found.\")\n    elif args.command == \"list\":\n        tasks = service.query_tasks(\n            status=Status(args.status) if args.status else None,\n            keyword=args.keyword,\n            priority=Priority(args.priority) if args.priority else None,\n        )\n        print(format_tasks(tasks))\n    return 0\n\n\nif __name__ == \"__main__\":\n    sys.exit(main())",
+          "description": "CLI 入口，负责解析命令行并调用 Service 层"
+        },
+        {
+          "path": "models.py",
+          "content": "\nfrom __future__ import annotations\nimport uuid\nfrom dataclasses import dataclass, field\nfrom datetime import datetime\nfrom enum import Enum\n\n\nclass Priority(Enum):\n    low = \"low\"\n    medium = \"medium\"\n    high = \"high\"\n\n\nclass Status(Enum):\n    pending = \"pending\"\n    completed = \"completed\"\n\n\n@dataclass(slots=True)\nclass Task:\n    id: str = field(default_factory=lambda: str(uuid.uuid4()))\n    title: str\n    description: str = \"\"\n    status: Status = Status.pending\n    priority: Priority = Priority.medium\n    created_at: datetime = field(default_factory=datetime.utcnow)\n\n    # 自定义初始化（避免 dataclass 处理默认值的陷阱）\n    def __post_init__(self):\n        if not isinstance(self.status, Status):\n            self.status = Status(self.status)\n        if not isinstance(self.priority, Priority):\n            self.priority = Priority(self.priority)\n        if isinstance(self.created_at, str):\n            self.created_at = datetime.fromisoformat(self.created_at)\n\n    def to_dict(self) -> dict:\n        return {\n            \"id\": self.id,\n            \"title\": self.title,\n            \"description\": self.description,\n            \"status\": self.status.value,\n            \"priority\": self.priority.value,\n            \"created_at\": self.created_at.isoformat(timespec=\"seconds\"),\n        }\n\n    @classmethod\n    def from_dict(cls, data: dict) -> Task:\n        return cls(**data)",
+          "description": "数据模型 / DTO"
+        },
+        {
+          "path": "repository.py",
+          "content": "\nimport json\nimport os\nimport tempfile\nfrom pathlib import Path\nfrom typing import List\n\nfrom models import Task\n\n_UNIX = os.name != \"nt\"\n\n\nclass JsonTaskRepository:\n    \"\"\"原子性 JSON 存储，零第三方依赖\"\"\"\n\n    def __init__(self, file_path: Path):\n        self._file: Path = file_path\n\n    def load(self) -> List[Task]:\n        if not self._file.exists():\n            return []\n        try:\n            with self._file.open(\"r\", encoding=\"utf-8\") as f:\n                data = json.load(f)\n            return [Task.from_dict(item) for item in data]\n        except (json.JSONDecodeError, KeyError, TypeError):\n            # 由 guard 负责恢复，这里返回空列表\n            return []\n\n    def save(self, tasks: List[Task]) -> None:\n        tmp: Path | None = None\n        try:\n            # 使用 PID 避免多进程冲突\n            tmp = Path(\n                tempfile.mktemp(\n                    prefix=f\"{self._file.name}.tmp-{os.getpid()}-\",\n                    dir=self._file.parent,\n                )\n            )\n            with tmp.open(\"w\", encoding=\"utf-8\") as f:\n                # 独占锁（POSIX）\n                if _UNIX:\n                    import fcntl\n\n                    fcntl.flock(f.fileno(), fcntl.LOCK_EX)\n                json.dump([t.to_dict() for t in tasks], f, ensure_ascii=False)\n                f.flush()\n                os.fsync(f.fileno())\n            # 原子替换\n            tmp.replace(self._file)\n        except Exception:\n            if tmp and tmp.exists():\n                tmp.unlink()\n            raise",
+          "description": "JSON 持久化层，负责原子性读写"
+        },
+        {
+          "path": "service.py",
+          "content": "\nfrom typing import List, Optional\n\nfrom models import Task, Status, Priority\nfrom repository import JsonTaskRepository\n\n\nclass TaskService:\n    def __init__(self, repo: JsonTaskRepository):\n        self._repo = repo\n\n    def create_task(self, title: str, description: str, priority: Priority) -> Task:\n        if not title.strip():\n            raise ValueError(\"Title cannot be empty.\")\n        task = Task(title=title.strip(), description=description.strip(), priority=priority)\n        tasks = self._repo.load()\n        tasks.append(task)\n        self._repo.save(tasks)\n        return task\n\n    def remove_task(self, task_id: str) -> bool:\n        tasks = self._repo.load()\n        for idx, t in enumerate(tasks):\n            if t.id == task_id:\n                del tasks[idx]\n                self._repo.save(tasks)\n                return True\n        return False\n\n    def mark_done(self, task_id: str) -> bool:\n        tasks = self._repo.load()\n        for t in tasks:\n            if t.id == task_id:\n                if t.status is Status.completed:\n                    return True\n                t.status = Status.completed\n                self._repo.save(tasks)\n                return True\n        return False\n\n    def query_tasks(\n        self,\n        status: Optional[Status] = None,\n        keyword: Optional[str] = None,\n        priority: Optional[Priority] = None,\n    ) -> List[Task]:\n        tasks = self._repo.load()\n        if status is not None:\n            tasks = [t for t in tasks if t.status == status]\n        if priority is not None:\n            tasks = [t for t in tasks if t.priority == priority]\n        if keyword:\n            kw = keyword.lower()\n            tasks = [\n                t\n                for t in tasks\n                if kw in t.title.lower() or kw in t.description.lower()\n            ]\n        return tasks",
+          "description": "业务用例层，封装规则与校验"
+        },
+        {
+          "path": "guard.py",
+          "content": "\nimport shutil\nfrom pathlib import Path\n\nimport json\n\n\nclass FileIntegrityGuard:\n    def __init__(self, file_path: Path, bak_suffix: str = \".bak\"):\n        self._file: Path = file_path\n        self._bak: Path = file_path.with_suffix(file_path.suffix + bak_suffix)\n\n    def verify_or_restore(self) -> bool:\n        \"\"\"返回 True 表示可用（原文件或已恢复）\"\"\"\n        if self._file.exists():\n            try:\n                with self._file.open(\"r\", encoding=\"utf-8\") as f:\n                    json.load(f)\n                # 健康文件，顺便更新备份\n                shutil.copy2(self._file, self._bak)\n                return True\n            except (json.JSONDecodeError, OSError):\n                # 损坏，尝试回滚\n                if self._bak.exists():\n                    shutil.copy2(self._bak, self._file)\n                    return True\n                # 无备份，创建空数组\n                self._file.write_text(\"[]\", encoding=\"utf-8\")\n                return True\n        else:\n            # 首次使用\n            if self._bak.exists():\n                shutil.copy2(self._bak, self._file)\n            else:\n                self._file.write_text(\"[]\", encoding=\"utf-8\")\n            return True",
+          "description": "文件完整性校验与自动备份恢复"
+        }
+      ],
+      "test_files": [],
+      "execution_time": 129.72021222114563,
+      "total_lines": 304,
+      "has_tests": false,
+      "quality_score": 70,
+      "issues": [
+        {
+          "severity": "high",
+          "category": "完整性",
+          "location": "todo.py:11",
+          "description": "导入 service、repository、guard、models 四个自定义模块，但当前仅提供了 todo.py、models.py、repository.py、service.py、guard.py 五个文件，未提供 __init__.py 或包结构。在 Python 3.9+ 直接运行 python todo.py 时，这些 import 会触发 ModuleNotFoundError，导致程序无法启动。",
+          "suggestion": "将所有文件放在同一目录，并在目录内增加 __init__.py 空文件，使该目录成为可导入包；或者把 todo.py 改为直接相对导入（from .models import ...）并在包外通过 python -m package.todo 启动；最简单的是保持全部文件平铺在同一目录，无需包结构，但需确保运行目录正确。"
+        },
+        {
+          "severity": "high",
+          "category": "安全",
+          "location": "repository.py:26",
+          "description": "save 方法使用 Path.replace 进行原子替换，但未给临时文件设置独占锁或权限掩码。若进程并发启动（如用户双击脚本多次），两个进程同时写入 tmp 文件会导致竞争，最终可能丢失任务或产生损坏。",
+          "suggestion": "在写入 tmp 前使用 fcntl 模块对文件加锁（POSIX）或生成带 PID 的临时文件名，并在 replace 前再次校验；或者引入文件锁库（虽违背零依赖要求，但可用 portalocker 的单文件嵌入版）。"
+        },
+        {
+          "severity": "medium",
+          "category": "性能",
+          "location": "service.py:46",
+          "description": "每次增删改查都全量 load/save 整个 JSON 文件，任务量稍大（>1000 条）或磁盘 IO 慢时，延迟将显著超过 100 ms 的非功能目标；同时频繁写入会加速 SSD 磨损。",
+          "suggestion": "在 TaskService 内增加简单内存缓存（_tasks_cache: List[Task]），启动时一次性 load，后续仅 save 落盘；为保持进程内一致性，可在 __init__ 加载，在 del 或显式 flush 时保存；注意 SIGKILL 场景下可能丢数据，可接受则无需额外 fsync。"
+        },
+        {
+          "severity": "medium",
+          "category": "安全",
+          "location": "todo.py:60",
+          "description": "CLI 未对 title / desc 长度做限制，用户可传入超长字符串（>1 MB）导致内存暴涨、JSON 文件巨大，甚至触发 OOM；同时未过滤控制字符，可能破坏终端显示。",
+          "suggestion": "在 create_task 内增加校验：title 长度 ≤ 200，desc ≤ 2000，priority 范围 1-99，并拒绝包含 \\x00 等控制字符；非法输入抛 ValueError，由 CLI 捕获后打印友好提示并 exit(1)。"
+        },
+        {
+          "severity": "medium",
+          "category": "质量",
+          "location": "todo.py:36",
+          "description": "argparse 的 id 参数类型未指定，用户输入非 UUID 格式时，Service 层找不到任务会返回 'Task not found.'，但 CLI 层未给出格式示例，易用性差。",
+          "suggestion": "在 help 字符串中给出示例 ID；或增加自定义 type=uuid_type 校验，提前报错：'Invalid UUID format, expect 36-char hex.'。"
+        },
+        {
+          "severity": "medium",
+          "category": "质量",
+          "location": "guard.py:38",
+          "description": "当主文件与备份均损坏时，直接 write_text('[]') 覆盖，但未记录日志或向用户告警，用户可能误以为任务仍在。",
+          "suggestion": "在覆盖前向 stderr 打印警告：'todo.json corrupted, initializing empty task list.'；同时可将损坏文件重命名为 todo.json.corrupted 供人工恢复。"
+        },
+        {
+          "severity": "low",
+          "category": "性能",
+          "location": "models.py:24",
+          "description": "TaskFilter.match 每次遍历都 lower() 两次，高频查询时重复计算；关键字为空时仍执行 in 判断。",
+          "suggestion": "在 TaskFilter.__post_init__ 中对 keyword 做一次 lower() 缓存；若 keyword 为 None 则直接跳过匹配分支。"
+        },
+        {
+          "severity": "low",
+          "category": "测试",
+          "location": "service.py:18",
+          "description": "业务规则（priority > 0、UUID 生成、幂等完成）均内嵌在类中，无独立单元测试文件；一旦重构易引入回归缺陷。",
+          "suggestion": "新增 tests/ 目录，使用 unittest 编写零依赖测试：test_create_task、test_mark_done_idempotent、test_query_filter；在 CI 或本地 make test 入口运行，保证覆盖率 >80%。"
+        }
+      ],
+      "phases": 5
+    }
+  },
+  {
+    "task": {
+      "id": 3,
+      "name": "中等任务：用户认证",
+      "description": "创建用户认证系统：用户注册（密码哈希）、登录（JWT token）、Token 验证、SQLite 数据库、错误处理",
+      "complexity": "中等"
+    },
+    "single_llm": {
+      "files": [
+        {
+          "path": "auth_system.py",
+          "content": "# filename: auth_system.py\n\"\"\"\n用户认证系统示例\n功能：\n1. 用户注册（密码哈希）\n2. 用户登录（发放 JWT Token）\n3. Token 验证\n4. 使用 SQLite 存储用户信息\n5. 完善的错误处理与日志\n\n运行前请安装依赖：\n    pip install fastapi[all] passlib[bcrypt] python-jose[cryptography]\n\n启动服务：\n    uvicorn auth_system:app --reload\n\n测试：\n    1. 注册\n       curl -X POST http://localhost:8000/register \\\n         -H \"Content-Type: application/json\" \\\n         -d '{\"username\":\"alice\",\"password\":\"123456\"}'\n    2. 登录\n       curl -X POST http://localhost:8000/login \\\n         -H \"Content-Type: application/json\" \\\n         -d '{\"username\":\"alice\",\"password\":\"123456\"}'\n    3. 访问受保护接口\n       curl http://localhost:8000/me \\\n         -H \"Authorization: Bearer <TOKEN>\"\n\"\"\"\n\nimport sqlite3\nimport logging\nimport os\nfrom datetime import datetime, timedelta\nfrom typing import Optional\n\nfrom fastapi import FastAPI, HTTPException, Depends, status\nfrom fastapi.security import HTTPBearer, HTTPAuthorizationCredentials\nfrom pydantic import BaseModel, validator\nfrom passlib.context import CryptContext\nfrom jose import jwt, JWTError\n\n# -------------------- 日志配置 --------------------\nlogging.basicConfig(\n    level=logging.INFO,\n    format=\"%(asctime)s [%(levelname)s] %(name)s: %(message)s\",\n    handlers=[logging.StreamHandler()]\n)\nlogger = logging.getLogger(\"auth\")\n\n# -------------------- 配置项 --------------------\nDATABASE_FILE = \"auth.db\"\nSECRET_KEY = os.getenv(\"JWT_SECRET\", \"dev-secret-key-change-me\")\nALGORITHM = \"HS256\"\nACCESS_TOKEN_EXPIRE_MINUTES = 60\n\n# -------------------- 数据模型 --------------------\nclass UserRegister(BaseModel):\n    username: str\n    password: str\n\n    @validator(\"username\")\n    def validate_username(cls, v):\n        if not v or len(v) < 3 or len(v) > 32:\n            raise ValueError(\"用户名长度必须在 3~32 字符之间\")\n        return v\n\n    @validator(\"password\")\n    def validate_password(cls, v):\n        if not v or len(v) < 6:\n            raise ValueError(\"密码长度至少 6 位\")\n        return v\n\n\nclass UserLogin(BaseModel):\n    username: str\n    password: str\n\n\nclass TokenResponse(BaseModel):\n    access_token: str\n    token_type: str = \"bearer\"\n\n\n# -------------------- 工具函数 --------------------\npwd_context = CryptContext(schemes=[\"bcrypt\"], deprecated=\"auto\")\n\n\ndef hash_password(password: str) -> str:\n    return pwd_context.hash(password)\n\n\ndef verify_password(plain: str, hashed: str) -> bool:\n    return pwd_context.verify(plain, hashed)\n\n\ndef create_access_token(data: dict, expires_delta: timedelta = None) -> str:\n    to_encode = data.copy()\n    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))\n    to_encode.update({\"exp\": expire})\n    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)\n\n\ndef decode_access_token(token: str) -> Optional[dict]:\n    try:\n        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])\n        return payload\n    except JWTError as e:\n        logger.warning(\"JWT decode error: %s\", e)\n        return None\n\n\n# -------------------- 数据库初始化 --------------------\ndef init_db():\n    \"\"\"初始化 SQLite 数据库，创建用户表（如果不存在）\"\"\"\n    conn = sqlite3.connect(DATABASE_FILE)\n    cur = conn.cursor()\n    cur.execute(\"\"\"\n        CREATE TABLE IF NOT EXISTS users (\n            id INTEGER PRIMARY KEY AUTOINCREMENT,\n            username TEXT UNIQUE NOT NULL,\n            password_hash TEXT NOT NULL,\n            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n        )\n    \"\"\")\n    conn.commit()\n    conn.close()\n    logger.info(\"Database initialized.\")\n\n\n# -------------------- 数据库操作 --------------------\ndef get_user_by_username(username: str) -> Optional[dict]:\n    conn = sqlite3.connect(DATABASE_FILE)\n    conn.row_factory = sqlite3.Row\n    cur = conn.cursor()\n    cur.execute(\"SELECT id, username, password_hash FROM users WHERE username = ?\", (username,))\n    row = cur.fetchone()\n    conn.close()\n    return dict(row) if row else None\n\n\ndef create_user(username: str, password_hash: str) -> int:\n    conn = sqlite3.connect(DATABASE_FILE)\n    cur = conn.cursor()\n    try:\n        cur.execute(\"INSERT INTO users (username, password_hash) VALUES (?, ?)\", (username, password_hash))\n        conn.commit()\n        logger.info(\"User %s created with id=%s\", username, cur.lastrowid)\n        return cur.lastrowid\n    except sqlite3.IntegrityError:\n        logger.warning(\"Duplicate username: %s\", username)\n        raise HTTPException(status_code=400, detail=\"用户名已存在\")\n    finally:\n        conn.close()\n\n\n# -------------------- FastAPI 依赖项 --------------------\nsecurity = HTTPBearer()\n\n\ndef get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> dict:\n    token = credentials.credentials\n    payload = decode_access_token(token)\n    if not payload or \"sub\" not in payload:\n        raise HTTPException(\n            status_code=status.HTTP_401_UNAUTHORIZED,\n            detail=\"Token 无效或已过期\",\n            headers={\"WWW-Authenticate\": \"Bearer\"},\n        )\n    username = payload[\"sub\"]\n    user = get_user_by_username(username)\n    if not user:\n        raise HTTPException(status_code=404, detail=\"用户不存在\")\n    return user\n\n\n# -------------------- 路由定义 --------------------\napp = FastAPI(title=\"用户认证系统\", version=\"1.0.0\")\n\n\n@app.on_event(\"startup\")\ndef on_startup():\n    init_db()\n\n\n@app.get(\"/\", summary=\"健康检查\")\ndef root():\n    return {\"message\": \"Auth service is running.\"}\n\n\n@app.post(\"/register\", summary=\"用户注册\", response_model=dict)\ndef register(body: UserRegister):\n    hashed = hash_password(body.password)\n    user_id = create_user(body.username, hashed)\n    return {\"id\": user_id, \"username\": body.username}\n\n\n@app.post(\"/login\", summary=\"用户登录\", response_model=TokenResponse)\ndef login(body: UserLogin):\n    user = get_user_by_username(body.username)\n    if not user or not verify_password(body.password, user[\"password_hash\"]):\n        raise HTTPException(status_code=400, detail=\"用户名或密码错误\")\n    token = create_access_token({\"sub\": user[\"username\"]})\n    return TokenResponse(access_token=token)\n\n\n@app.get(\"/me\", summary=\"获取当前用户信息\", response_model=dict)\ndef get_me(current_user: dict = Depends(get_current_user)):\n    return {\"id\": current_user[\"id\"], \"username\": current_user[\"username\"]}\n\n\n# -------------------- 异常处理器 --------------------\n@app.exception_handler(ValueError)\ndef value_error_handler(request, exc):\n    logger.error(\"ValueError: %s\", exc)\n    raise HTTPException(status_code=400, detail=str(exc))\n\n\n# -------------------- 主程序入口 --------------------\nif __name__ == \"__main__\":\n    import uvicorn\n    uvicorn.run(\"auth_system:app\", host=\"0.0.0.0\", port=8000, reload=True)"
+        }
+      ],
+      "execution_time": 16.290388107299805,
+      "total_lines": 222,
+      "has_tests": false,
+      "tokens": 1665
+    },
+    "autodev": {
+      "files": [
+        {
+          "path": "requirements.txt",
+          "content": "aiosqlite>=0.19\nargon2-cffi>=23\ncryptography>=41\nfastapi[all]>=0.110\npydantic[email]>=2.6\nPyJWT[crypto]>=2.8\npython-multipart>=0.0.9\nsqlmodel>=0.14\nuvicorn[standard]>=0.27",
+          "description": "生产依赖（已补齐缺失包）"
+        },
+        {
+          "path": "app.py",
+          "content": "from contextlib import asynccontextmanager\nfrom uuid import uuid4\n\nfrom fastapi import FastAPI, Request\nfrom fastapi.responses import JSONResponse\nfrom starlette.middleware.base import BaseHTTPMiddleware\n\nfrom src.adapter.routers.auth import auth_router\nfrom src.infrastructure.db.sqlite import create_db_and_tables\nfrom src.domain.exceptions import BusinessError, JWTError\n\n\nclass ExceptionHandlerMiddleware(BaseHTTPMiddleware):\n    \"\"\"统一错误响应\"\"\"\n    async def dispatch(self, request: Request, call_next):\n        trace_id = str(uuid4())\n        try:\n            response = await call_next(request)\n            return response\n        except BusinessError as exc:\n            return JSONResponse(\n                status_code=exc.status_code,\n                content={\n                    \"code\": exc.code,\n                    \"msg\": exc.message,\n                    \"detail\": exc.detail,\n                    \"trace_id\": trace_id,\n                },\n            )\n        except JWTError as exc:\n            return JSONResponse(\n                status_code=exc.status_code,\n                content={\n                    \"code\": exc.code,\n                    \"msg\": exc.message,\n                    \"detail\": exc.detail,\n                    \"trace_id\": trace_id,\n                },\n            )\n        except Exception as exc:\n            # 兜底 500\n            return JSONResponse(\n                status_code=500,\n                content={\n                    \"code\": \"INTERNAL_SERVER_ERROR\",\n                    \"msg\": \"服务器内部错误\",\n                    \"detail\": str(exc),\n                    \"trace_id\": trace_id,\n                },\n            )\n\n\n@asynccontextmanager\nasync def lifespan(app: FastAPI):\n    await create_db_and_tables()\n    yield\n\n\napp = FastAPI(\n    title=\"Clean Auth Service\",\n    version=\"1.0.0\",\n    lifespan=lifespan,\n)\n\napp.add_middleware(ExceptionHandlerMiddleware)\napp.include_router(auth_router, prefix=\"/auth\", tags=[\"auth\"])",
+          "description": "FastAPI 入口与全局中间件"
+        },
+        {
+          "path": "src/adapter/routers/auth.py",
+          "content": "from datetime import datetime, timedelta, timezone\nfrom typing import Annotated\n\nfrom fastapi import APIRouter, Depends, status\nfrom pydantic import BaseModel, EmailStr, Field\n\nfrom src.domain.entities.user import User\nfrom src.domain.use_cases.authenticate_user import AuthenticateUser\nfrom src.domain.use_cases.register_user import RegisterUser\nfrom src.domain.use_cases.validate_token import ValidateToken\nfrom src.infrastructure.security.rs256_token_service import RS256TokenService\nfrom src.infrastructure.repositories.sqlite_user_repository import (\n    SQLiteUserRepository,\n)\nfrom src.domain.exceptions import BusinessError\n\n\nrouter = APIRouter()\n\n\n# ---- Schemas ----\nclass RegisterRequest(BaseModel):\n    username: str = Field(min_length=3, max_length=32, pattern=r\"^[A-Za-z0-9_]+$\")\n    password: str = Field(min_length=8, max_length=128)\n    email: EmailStr\n\n\nclass RegisterResponse(BaseModel):\n    id: int\n    username: str\n    email: str\n    created_at: datetime\n\n\nclass LoginRequest(BaseModel):\n    username: str\n    password: str\n\n\nclass LoginResponse(BaseModel):\n    access_token: str\n    token_type: str = \"Bearer\"\n    expires_in: int  # seconds\n\n\n# ---- Dependencies ----\ndef get_user_repo() -> SQLiteUserRepository:\n    return SQLiteUserRepository()\n\n\ndef get_token_service() -> RS256TokenService:\n    return RS256TokenService()\n\n\n# ---- Routes ----\n@router.post(\n    \"/register\",\n    status_code=status.HTTP_201_CREATED,\n    response_model=RegisterResponse,\n)\nasync def register(\n    req: RegisterRequest,\n    repo: Annotated[SQLiteUserRepository, Depends(get_user_repo)],\n):\n    use_case = RegisterUser(repo)\n    user = await use_case.execute(req.username, req.password, req.email)\n    return RegisterResponse(\n        id=user.id,\n        username=user.username,\n        email=user.email,\n        created_at=user.created_at,\n    )\n\n\n@router.post(\"/login\", response_model=LoginResponse)\nasync def login(\n    req: LoginRequest,\n    repo: Annotated[SQLiteUserRepository, Depends(get_user_repo)],\n    token_service: Annotated[RS256TokenService, Depends(get_token_service)],\n):\n    use_case = AuthenticateUser(repo, token_service)\n    token, expire_seconds = await use_case.execute(req.username, req.password)\n    return LoginResponse(\n        access_token=token,\n        expires_in=expire_seconds,\n    )\n\n\nasync def get_current_user(\n    token: str,\n    repo: Annotated[SQLiteUserRepository, Depends(get_user_repo)],\n    token_service: Annotated[RS256TokenService, Depends(get_token_service)],\n) -> User:\n    \"\"\"供其它路由依赖的复用函数\"\"\"\n    use_case = ValidateToken(repo, token_service)\n    return await use_case.execute(token)\n\n\n# ---- Protected Demo ----\n@router.get(\"/me\", response_model=RegisterResponse)\nasync def me(current: Annotated[User, Depends(get_current_user)]):\n    return RegisterResponse(\n        id=current.id,\n        username=current.username,\n        email=current.email,\n        created_at=current.created_at,\n    )",
+          "description": "REST 端口：注册 / 登录 / 校验"
+        },
+        {
+          "path": "src/domain/entities/user.py",
+          "content": "from datetime import datetime\nfrom typing import Optional\n\nfrom sqlmodel import Field, SQLModel\n\n\nclass User(SQLModel, table=True):\n    __tablename__ = \"users\"\n    id: Optional[int] = Field(default=None, primary_key=True)\n    username: str = Field(sa_column_kwargs={\"unique\": True, \"index\": True})\n    email: str = Field(sa_column_kwargs={\"unique\": True, \"index\": True})\n    password_hash: str\n    role: str = Field(default=\"user\")\n    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))",
+          "description": "领域实体"
+        },
+        {
+          "path": "src/domain/entities/token_payload.py",
+          "content": "from datetime import datetime\nfrom typing import Optional\n\nfrom pydantic import BaseModel\n\n\nclass TokenPayload(BaseModel):\n    sub: str  # user id\n    role: str\n    exp: datetime\n    iat: datetime\n    jti: Optional[str] = None  # JWT ID，用于轮换 / 撤销",
+          "description": "JWT Payload 值对象"
+        },
+        {
+          "path": "src/domain/exceptions.py",
+          "content": "from fastapi import status\n\n\nclass BusinessError(Exception):\n    def __init__(self, code: str, message: str, status_code: int = 400, detail=None):\n        self.code = code\n        self.message = message\n        self.status_code = status_code\n        self.detail = detail or {}\n\n\nclass JWTError(BusinessError):\n    pass\n\n\nclass UserAlreadyExistsError(BusinessError):\n    def __init__(self, field: str):\n        super().__init__(\n            code=\"USER_ALREADY_EXISTS\",\n            message=f\"{field} 已存在\",\n            status_code=status.HTTP_409_CONFLICT,\n            detail={\"field\": field},\n        )\n\n\nclass InvalidCredentialsError(BusinessError):\n    def __init__(self):\n        super().__init__(\n            code=\"INVALID_CREDENTIALS\",\n            message=\"用户名或密码错误\",\n            status_code=status.HTTP_401_UNAUTHORIZED,\n        )\n\n\nclass TokenExpiredError(JWTError):\n    def __init__(self):\n        super().__init__(\n            code=\"TOKEN_EXPIRED\",\n            message=\"Token 已过期\",\n            status_code=status.HTTP_401_UNAUTHORIZED,\n        )\n\n\nclass InvalidTokenError(JWTError):\n    def __init__(self, detail=None):\n        super().__init__(\n            code=\"INVALID_TOKEN\",\n            message=\"Token 无效\",\n            status_code=status.HTTP_401_UNAUTHORIZED,\n            detail=detail,\n        )",
+          "description": "业务异常与 JWT 异常"
+        },
+        {
+          "path": "src/domain/repositories/user_repository.py",
+          "content": "from abc import ABC, abstractmethod\n\nfrom src.domain.entities.user import User\n\n\nclass UserRepository(ABC):\n    @abstractmethod\n    async def save(self, user: User) -> User:\n        raise NotImplementedError\n\n    @abstractmethod\n    async def find_by_username(self, username: str) -> User | None:\n        raise NotImplementedError\n\n    @abstractmethod\n    async def find_by_email(self, email: str) -> User | None:\n        raise NotImplementedError\n\n    @abstractmethod\n    async def find_by_id(self, user_id: int) -> User | None:\n        raise NotImplementedError",
+          "description": "端口（接口）"
+        },
+        {
+          "path": "src/domain/services/token_service.py",
+          "content": "from abc import ABC, abstractmethod\n\nfrom src.domain.entities.token_payload import TokenPayload\n\n\nclass TokenService(ABC):\n    @abstractmethod\n    async def generate(self, payload: TokenPayload) -> str:\n        raise NotImplementedError\n\n    @abstractmethod\n    async def verify(self, token: str) -> TokenPayload:\n        raise NotImplementedError",
+          "description": "端口（接口）"
+        },
+        {
+          "path": "src/domain/use_cases/register_user.py",
+          "content": "from datetime import timezone\n\nfrom argon2 import PasswordHasher\n\nfrom src.domain.entities.user import User\nfrom src.domain.exceptions import UserAlreadyExistsError\nfrom src.domain.repositories.user_repository import UserRepository\n\nargon2 = PasswordHasher(\n    time_cost=3,\n    memory_cost=65536,  # 64 MB\n    hash_len=32,\n    type=\"ID\",\n)\n\n\nclass RegisterUser:\n    def __init__(self, repo: UserRepository):\n        self.repo = repo\n\n    async def execute(self, username: str, password: str, email: str) -> User:\n        if await self.repo.find_by_username(username):\n            raise UserAlreadyExistsError(\"username\")\n        if await self.repo.find_by_email(email):\n            raise UserAlreadyExistsError(\"email\")\n\n        password_hash = argon2.hash(password)\n        user = User(\n            username=username,\n            email=email,\n            password_hash=password_hash,\n        )\n        return await self.repo.save(user)",
+          "description": "用例：注册用户"
+        },
+        {
+          "path": "src/domain/use_cases/authenticate_user.py",
+          "content": "from datetime import datetime, timedelta, timezone\n\nfrom argon2 import PasswordHasher, exceptions as argon_exc\n\nfrom src.domain.entities.token_payload import TokenPayload\nfrom src.domain.exceptions import InvalidCredentialsError\nfrom src.domain.repositories.user_repository import UserRepository\nfrom src.domain.services.token_service import TokenService\n\nargon2 = PasswordHasher()\n\n\nclass AuthenticateUser:\n    def __init__(self, repo: UserRepository, token_service: TokenService):\n        self.repo = repo\n        self.token_service = token_service\n\n    async def execute(self, username: str, password: str) -> tuple[str, int]:\n        user = await self.repo.find_by_username(username)\n        if not user:\n            raise InvalidCredentialsError()\n\n        try:\n            argon2.verify(user.password_hash, password)\n        except argon_exc.VerifyMismatchError:\n            raise InvalidCredentialsError()\n\n        now = datetime.now(timezone.utc)\n        exp = now + timedelta(hours=24)\n        payload = TokenPayload(\n            sub=str(user.id),\n            role=user.role,\n            exp=exp,\n            iat=now,\n        )\n        token = await self.token_service.generate(payload)\n        return token, int((exp - now).total_seconds())",
+          "description": "用例：登录并签发 JWT"
+        },
+        {
+          "path": "src/domain/use_cases/validate_token.py",
+          "content": "from src.domain.exceptions import InvalidTokenError\nfrom src.domain.repositories.user_repository import UserRepository\nfrom src.domain.services.token_service import TokenService\n\n\nclass ValidateToken:\n    def __init__(self, repo: UserRepository, token_service: TokenService):\n        self.repo = repo\n        self.token_service = token_service\n\n    async def execute(self, token: str):\n        payload = await self.token_service.verify(token)\n        user_id = int(payload.sub)\n        user = await self.repo.find_by_id(user_id)\n        if not user:\n            raise InvalidTokenError(\"用户不存在\")\n        return user",
+          "description": "用例：验证 JWT 并返回 User"
+        },
+        {
+          "path": "src/infrastructure/db/sqlite.py",
+          "content": "from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine\nfrom sqlmodel import SQLModel\n\nfrom src.domain.entities.user import User  # noqa: F401 建表需要\n\nsqlite_url = \"sqlite+aiosqlite:///./auth.db\"\nasync_engine: AsyncEngine = create_async_engine(\n    sqlite_url,\n    echo=False,\n    connect_args={\n        \"check_same_thread\": False,\n        \"isolation_level\": \"WAL\",\n        \"foreign_keys\": True,\n    },\n)\n\n\nasync def create_db_and_tables():\n    async with async_engine.begin() as conn:\n        await conn.run_sync(SQLModel.metadata.create_all)",
+          "description": "SQLite 连接与建表"
+        },
+        {
+          "path": "src/infrastructure/repositories/sqlite_user_repository.py",
+          "content": "from sqlalchemy.ext.asyncio import AsyncSession\nfrom sqlmodel import select\n\nfrom src.infrastructure.db.sqlite import async_engine\nfrom src.domain.entities.user import User\nfrom src.domain.repositories.user_repository import UserRepository\n\n\nclass SQLiteUserRepository(UserRepository):\n    async def save(self, user: User) -> User:\n        async with AsyncSession(async_engine) as session:\n            session.add(user)\n            await session.commit()\n            await session.refresh(user)\n            return user\n\n    async def find_by_username(self, username: str) -> User | None:\n        async with AsyncSession(async_engine) as session:\n            stmt = select(User).where(User.username == username)\n            res = await session.execute(stmt)\n            return res.scalar_one_or_none()\n\n    async def find_by_email(self, email: str) -> User | None:\n        async with AsyncSession(async_engine) as session:\n            stmt = select(User).where(User.email == email)\n            res = await session.execute(stmt)\n            return res.scalar_one_or_none()\n\n    async def find_by_id(self, user_id: int) -> User | None:\n        async with AsyncSession(async_engine) as session:\n            stmt = select(User).where(User.id == user_id)\n            res = await session.execute(stmt)\n            return res.scalar_one_or_none()",
+          "description": "被驱动适配器：SQLite 仓储"
+        },
+        {
+          "path": "src/infrastructure/security/rs256_token_service.py",
+          "content": "import time\nfrom datetime import timezone\nfrom uuid import uuid4\n\nimport jwt\nfrom cryptography.hazmat.primitives import serialization\nfrom cryptography.hazmat.primitives.asymmetric import rsa\n\nfrom src.domain.entities.token_payload import TokenPayload\nfrom src.domain.exceptions import TokenExpiredError, InvalidTokenError\nfrom src.domain.services.token_service import TokenService\n\n# 一次性生成密钥文件；生产环境请挂载安全卷\n_PRIVATE_PEM = \"private.pem\"\n_PUBLIC_PEM = \"public.pem\"\n\n\ndef _ensure_keys():\n    try:\n        with open(_PRIVATE_PEM, \"rb\") as f:\n            private_key = serialization.load_pem_private_key(f.read(), password=None)\n        with open(_PUBLIC_PEM, \"rb\") as f:\n            public_key = serialization.load_pem_public_key(f.read())\n    except FileNotFoundError:\n        private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)\n        public_key = private_key.public_key()\n        # 持久化\n        with open(_PRIVATE_PEM, \"wb\") as f:\n            f.write(\n                private_key.private_bytes(\n                    encoding=serialization.Encoding.PEM,\n                    format=serialization.PrivateFormat.TraditionalOpenSSL,\n                    encryption_algorithm=serialization.NoEncryption(),\n                )\n            )\n        with open(_PUBLIC_PEM, \"wb\") as f:\n            f.write(\n                public_key.public_bytes(\n                    encoding=serialization.Encoding.PEM,\n                    format=serialization.PublicFormat.SubjectPublicKeyInfo,\n                )\n            )\n    return private_key, public_key\n\n\nclass RS256TokenService(TokenService):\n    def __init__(self):\n        self._priv, self._pub = _ensure_keys()\n\n    async def generate(self, payload: TokenPayload) -> str:\n        now = int(time.time())\n        to_encode = {\n            \"sub\": payload.sub,\n            \"role\": payload.role,\n            \"iat\": int(payload.iat.timestamp()),\n            \"exp\": int(payload.exp.timestamp()),\n            \"jti\": payload.jti or str(uuid4()),\n        }\n        return jwt.encode(to_encode, self._priv, algorithm=\"RS256\")\n\n    async def verify(self, token: str) -> TokenPayload:\n        try:\n            payload = jwt.decode(\n                token,\n                self._pub,\n                algorithms=[\"RS256\"],\n                options={\"require\": [\"exp\", \"sub\", \"role\"]},\n            )\n        except jwt.ExpiredSignatureError:\n            raise TokenExpiredError()\n        except jwt.PyJWTError as e:\n            raise InvalidTokenError(str(e))\n        return TokenPayload(\n            sub=payload[\"sub\"],\n            role=payload[\"role\"],\n            exp=datetime.fromtimestamp(payload[\"exp\"], tz=timezone.utc),\n            iat=datetime.fromtimestamp(payload[\"iat\"], tz=timezone.utc),\n            jti=payload.get(\"jti\"),\n        )",
+          "description": "RS256 JWT 实现"
+        },
+        {
+          "path": "Dockerfile",
+          "content": "FROM python:3.11-slim\nWORKDIR /app\nCOPY requirements.txt .\nRUN pip install --no-cache-dir -r requirements.txt\nCOPY . .\nENV PYTHONUNBUFFERED=1\nCMD [\"uvicorn\", \"app:app\", \"--host=0.0.0.0\", \"--port=8000\"]",
+          "description": "容器化构建"
+        },
+        {
+          "path": "docker-compose.yml",
+          "content": "version: \"3.9\"\nservices:\n  auth:\n    build: .\n    ports:\n      - \"8000:8000\"\n    volumes:\n      - ./auth.db:/app/auth.db",
+          "description": "一键本地开发"
+        }
+      ],
+      "test_files": [],
+      "execution_time": 241.2009298801422,
+      "total_lines": 527,
+      "has_tests": false,
+      "quality_score": 70,
+      "issues": [
+        {
+          "severity": "high",
+          "category": "完整性",
+          "location": "app.py:11",
+          "description": "导入未提供的模块 src.adapter.routers.auth，代码无法直接运行",
+          "suggestion": "补充缺失的 auth 路由文件（如 src/adapter/routers/auth.py）并暴露 auth_router"
+        },
+        {
+          "severity": "high",
+          "category": "完整性",
+          "location": "src/infrastructure/db/sqlite.py:1",
+          "description": "依赖第三方库 aiosqlite 未在 requirements 中声明，会导致运行时 ModuleNotFoundError",
+          "suggestion": "在 requirements.txt / pyproject.toml 中显式添加 aiosqlite>=0.19"
+        },
+        {
+          "severity": "high",
+          "category": "完整性",
+          "location": "src/infrastructure/security/rs256_token_service.py:8",
+          "description": "依赖 PyJWT 与 cryptography，但两者均未出现在依赖清单中",
+          "suggestion": "在依赖文件中添加 PyJWT[crypto]>=2.8 与 cryptography>=41"
+        },
+        {
+          "severity": "high",
+          "category": "完整性",
+          "location": "src/domain/use_cases/register_user.py:4",
+          "description": "argon2-cffi 库缺失，将导致 ImportError",
+          "suggestion": "添加 argon2-cffi>=23 到依赖清单"
+        },
+        {
+          "severity": "medium",
+          "category": "安全",
+          "location": "app.py:33",
+          "description": "CORS 允许 origins='*' 且 allow_credentials=True，浏览器会拒绝并带来 CSRF 风险",
+          "suggestion": "按实际前端域名白名单配置 allow_origins，或关闭 credentials"
+        },
+        {
+          "severity": "medium",
+          "category": "安全",
+          "location": "src/infrastructure/security/rs256_token_service.py:32",
+          "description": "自动生成并落盘私钥文件，若目录权限不足或被提交到代码仓库，会导致密钥泄露",
+          "suggestion": "启动时检查 KEY_DIR 权限（0o700），禁止 git 追踪；生产环境应使用 KMS 或挂载只读密钥卷"
+        },
+        {
+          "severity": "medium",
+          "category": "质量",
+          "location": "src/infrastructure/repositories/user_repo_sqlite.py:18",
+          "description": "多处重复手动映射列到 User 构造函数，易出错且难维护",
+          "suggestion": "封装私有 _row_to_user(row) -> User 方法，统一转换逻辑"
+        },
+        {
+          "severity": "medium",
+          "category": "性能",
+          "location": "src/infrastructure/repositories/user_repo_sqlite.py:50",
+          "description": "find_by_id 未加索引，主键查询本可优化，但 username/email 亦未建索引，大规模并发下回表开销大",
+          "suggestion": "在 SQLite 初始化脚本追加 CREATE UNIQUE INDEX idx_users_username ON users(username); 与 email 索引"
+        },
+        {
+          "severity": "medium",
+          "category": "安全",
+          "location": "src/domain/use_cases/authenticate_user.py:10",
+          "description": "argon2 实例未使用与注册时同样的 RFC_9106_LOW_MEMORY 参数，存在哈希验证失败风险",
+          "suggestion": "将 ph 实例提取到公共模块，确保注册与认证使用同一套参数"
+        },
+        {
+          "severity": "low",
+          "category": "质量",
+          "location": "src/domain/entities/user.py:12",
+          "description": "created_at 使用 datetime.utcnow() 已过时，Python 3.12+ 推荐 datetime.now(timezone.utc)",
+          "suggestion": "from datetime import timezone; default_factory=lambda: datetime.now(timezone.utc)"
+        },
+        {
+          "severity": "low",
+          "category": "质量",
+          "location": "app.py:45",
+          "description": "trace_id 生成未接入分布式链路（如 uuid -> ulid/request-id header），不利于全链路排查",
+          "suggestion": "优先读取 X-Request-ID 头部，缺失时再生成 uuid4"
+        },
+        {
+          "severity": "low",
+          "category": "测试",
+          "location": "所有模块",
+          "description": "未提供单元测试与集成测试文件，无法验证功能正确性与覆盖率≥80% 的要求",
+          "suggestion": "补充 tests/unit 与 tests/integration，至少覆盖注册冲突、登录失败、Token 过期、验签成功四条主路径"
+        }
+      ],
+      "phases": 5
+    }
+  },
+  {
+    "task": {
+      "id": 4,
+      "name": "复杂任务：REST API",
+      "description": "创建一个图书管理 REST API：CRUD 操作、分页、搜索、输入验证、错误处理、SQLite 数据库",
+      "complexity": "复杂"
+    },
+    "single_llm": {
+      "files": [
+        {
+          "path": "app.py",
+          "content": "# filename: app.py\n\"\"\"\n图书管理 REST API\n功能：CRUD、分页、搜索、输入验证、错误处理、SQLite 数据库\n运行：python app.py\n\"\"\"\n\nimport sqlite3\nimport os\nfrom typing import List, Dict, Optional\nfrom pydantic import BaseModel, Field, validator\nfrom fastapi import FastAPI, HTTPException, Query\nfrom fastapi.responses import JSONResponse\nfrom contextlib import asynccontextmanager\nimport uvicorn\n\nDB_FILE = \"books.db\"\n\n\n# -------------------- 数据库初始化 --------------------\ndef init_db():\n    \"\"\"首次运行时创建 books 表\"\"\"\n    conn = sqlite3.connect(DB_FILE)\n    conn.execute(\n        \"\"\"\n        CREATE TABLE IF NOT EXISTS books (\n            id         INTEGER PRIMARY KEY AUTOINCREMENT,\n            title      TEXT    NOT NULL,\n            author     TEXT    NOT NULL,\n            year       INTEGER NOT NULL CHECK (year >= 0 AND year <= 2100),\n            available  INTEGER NOT NULL DEFAULT 1 CHECK (available IN (0,1))\n        );\n        \"\"\"\n    )\n    conn.commit()\n    conn.close()\n\n\n# -------------------- Pydantic 模型 --------------------\nclass BookCreate(BaseModel):\n    title: str = Field(..., min_length=1, max_length=200)\n    author: str = Field(..., min_length=1, max_length=100)\n    year: int = Field(..., ge=0, le=2100)\n    available: bool = True\n\n    @validator(\"title\", \"author\")\n    def strip_strings(cls, v):\n        return v.strip()\n\n\nclass BookUpdate(BaseModel):\n    title: Optional[str] = Field(None, min_length=1, max_length=200)\n    author: Optional[str] = Field(None, min_length=1, max_length=100)\n    year: Optional[int] = Field(None, ge=0, le=2100)\n    available: Optional[bool] = None\n\n    @validator(\"title\", \"author\")\n    def strip_strings(cls, v):\n        return v.strip() if v is not None else None\n\n\nclass Book(BaseModel):\n    id: int\n    title: str\n    author: str\n    year: int\n    available: bool\n\n\n# -------------------- 数据库操作 --------------------\ndef get_conn():\n    conn = sqlite3.connect(DB_FILE)\n    conn.row_factory = sqlite3.Row  # 返回 dict-like\n    return conn\n\n\ndef row_to_book(row) -> Book:\n    return Book(\n        id=row[\"id\"],\n        title=row[\"title\"],\n        author=row[\"author\"],\n        year=row[\"year\"],\n        available=bool(row[\"available\"]),\n    )\n\n\n# -------------------- FastAPI 应用 --------------------\n@asynccontextmanager\nasync def lifespan(app: FastAPI):\n    init_db()\n    yield\n\n\napp = FastAPI(title=\"图书管理 REST API\", version=\"1.0.0\", lifespan=lifespan)\n\n\n# -------------------- 全局错误处理 --------------------\n@app.exception_handler(ValueError)\nasync def value_error_handler(request, exc):\n    return JSONResponse(status_code=400, content={\"detail\": str(exc)})\n\n\n@app.exception_handler(sqlite3.Error)\nasync def sqlite_error_handler(request, exc):\n    return JSONResponse(status_code=500, content={\"detail\": \"数据库内部错误\"})\n\n\n# -------------------- CRUD 路由 --------------------\n@app.post(\"/books\", response_model=Book, status_code=201)\ndef create_book(book: BookCreate):\n    conn = get_conn()\n    cur = conn.cursor()\n    cur.execute(\n        \"INSERT INTO books (title, author, year, available) VALUES (?, ?, ?, ?)\",\n        (book.title, book.author, book.year, int(book.available)),\n    )\n    conn.commit()\n    new_id = cur.lastrowid\n    conn.close()\n    return Book(\n        id=new_id,\n        title=book.title,\n        author=book.author,\n        year=book.year,\n        available=book.available,\n    )\n\n\n@app.get(\"/books\", response_model=List[Book])\ndef list_books(\n    page: int = Query(1, ge=1),\n    size: int = Query(10, ge=1, le=100),\n    search: Optional[str] = Query(None, min_length=1),\n):\n    conn = get_conn()\n    where_clause = \"\"\n    params: List = []\n    if search:\n        where_clause = \"WHERE title LIKE ? OR author LIKE ?\"\n        params.extend([f\"%{search}%\", f\"%{search}%\"])\n\n    # 总数\n    total = conn.execute(\n        f\"SELECT COUNT(*) AS cnt FROM books {where_clause}\", params\n    ).fetchone()[\"cnt\"]\n\n    # 分页数据\n    offset = (page - 1) * size\n    sql = f\"SELECT * FROM books {where_clause} LIMIT ? OFFSET ?\"\n    params.extend([size, offset])\n    rows = conn.execute(sql, params).fetchall()\n    conn.close()\n\n    return [row_to_book(r) for r in rows]\n\n\n@app.get(\"/books/{book_id}\", response_model=Book)\ndef get_book(book_id: int):\n    conn = get_conn()\n    row = conn.execute(\"SELECT * FROM books WHERE id = ?\", (book_id,)).fetchone()\n    conn.close()\n    if not row:\n        raise HTTPException(status_code=404, detail=\"图书不存在\")\n    return row_to_book(row)\n\n\n@app.put(\"/books/{book_id}\", response_model=Book)\ndef update_book(book_id: int, book: BookUpdate):\n    conn = get_conn()\n    cur = conn.cursor()\n    # 先查存在\n    row = cur.execute(\"SELECT * FROM books WHERE id = ?\", (book_id,)).fetchone()\n    if not row:\n        conn.close()\n        raise HTTPException(status_code=404, detail=\"图书不存在\")\n\n    # 构建动态更新\n    fields = []\n    values = []\n    if book.title is not None:\n        fields.append(\"title = ?\")\n        values.append(book.title)\n    if book.author is not None:\n        fields.append(\"author = ?\")\n        values.append(book.author)\n    if book.year is not None:\n        fields.append(\"year = ?\")\n        values.append(book.year)\n    if book.available is not None:\n        fields.append(\"available = ?\")\n        values.append(int(book.available))\n\n    if not fields:\n        conn.close()\n        raise HTTPException(status_code=400, detail=\"无更新字段\")\n\n    values.append(book_id)\n    sql = f\"UPDATE books SET {', '.join(fields)} WHERE id = ?\"\n    cur.execute(sql, values)\n    conn.commit()\n\n    # 返回更新后\n    updated_row = cur.execute(\"SELECT * FROM books WHERE id = ?\", (book_id,)).fetchone()\n    conn.close()\n    return row_to_book(updated_row)\n\n\n@app.delete(\"/books/{book_id}\", status_code=204)\ndef delete_book(book_id: int):\n    conn = get_conn()\n    cur = conn.cursor()\n    row = cur.execute(\"SELECT 1 FROM books WHERE id = ?\", (book_id,)).fetchone()\n    if not row:\n        conn.close()\n        raise HTTPException(status_code=404, detail=\"图书不存在\")\n    cur.execute(\"DELETE FROM books WHERE id = ?\", (book_id,))\n    conn.commit()\n    conn.close()\n    return None\n\n\n# -------------------- 启动 --------------------\nif __name__ == \"__main__\":\n    uvicorn.run(\"app:app\", host=\"0.0.0.0\", port=8000, reload=True)"
+        }
+      ],
+      "execution_time": 22.1316921710968,
+      "total_lines": 224,
+      "has_tests": false,
+      "tokens": 1655
+    },
+    "autodev": {
+      "files": [
+        {
+          "path": "app.py",
+          "content": "\nfrom contextlib import asynccontextmanager\nfrom fastapi import FastAPI, Request, status\nfrom fastapi.responses import JSONResponse\nfrom fastapi.middleware.cors import CORSMiddleware\nfrom sqlalchemy.exc import SQLAlchemyError\nfrom pydantic import ValidationError\n\nfrom domain.exceptions import DomainException, NotFoundException, ConflictException\nfrom adapters.orm import start_mappers\nfrom adapters.entrypoints.book_controller import router as book_router\nfrom config import settings\nimport logging\n\nlogging.basicConfig(level=logging.INFO)\nlogger = logging.getLogger(__name__)\n\n\n@asynccontextmanager\nasync def lifespan(app: FastAPI):\n    # 启动时初始化 ORM Mapper\n    start_mappers()\n    logger.info(\"ORM mapper started.\")\n    yield\n    # 关闭时可清理连接池等资源\n    logger.info(\"Application shutdown.\")\n\n\napp = FastAPI(\n    title=settings.PROJECT_NAME,\n    version=settings.VERSION,\n    docs_url=\"/docs\",\n    redoc_url=\"/redoc\",\n    lifespan=lifespan,\n)\n\n# CORS 中间件\napp.add_middleware(\n    CORSMiddleware,\n    allow_origins=settings.CORS_ORIGINS,\n    allow_credentials=True,\n    allow_methods=[\"*\"],\n    allow_headers=[\"*\"],\n)\n\n\n# 全局异常处理器\n@app.exception_handler(DomainException)\nasync def domain_exception_handler(request: Request, exc: DomainException):\n    return JSONResponse(\n        status_code=exc.status_code,\n        content={\"code\": exc.code, \"message\": exc.message, \"details\": exc.details},\n    )\n\n\n@app.exception_handler(ValidationError)\nasync def pydantic_validation_handler(request: Request, exc: ValidationError):\n    return JSONResponse(\n        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,\n        content={\n            \"code\": \"VALIDATION_ERROR\",\n            \"message\": \"请求参数校验失败\",\n            \"details\": exc.errors(),\n        },\n    )\n\n\n@app.exception_handler(SQLAlchemyError)\nasync def sqlalchemy_handler(request: Request, exc: SQLAlchemyError):\n    logger.exception(\"数据库错误\")\n    return JSONResponse(\n        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,\n        content={\n            \"code\": \"DATABASE_ERROR\",\n            \"message\": \"数据库操作失败\",\n            \"details\": str(exc),\n        },\n    )\n\n\n@app.exception_handler(Exception)\nasync def catch_all_handler(request: Request, exc: Exception):\n    logger.exception(\"未捕获的异常\")\n    return JSONResponse(\n        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,\n        content={\n            \"code\": \"INTERNAL_SERVER_ERROR\",\n            \"message\": \"服务器内部错误\",\n            \"details\": str(exc),\n        },\n    )\n\n\n# 注册路由\napp.include_router(book_router, prefix=\"/api/v1\")\n",
+          "description": "FastAPI 应用主文件，初始化依赖、路由与全局异常处理"
+        },
+        {
+          "path": "config.py",
+          "content": "\nfrom pydantic_settings import BaseSettings\n\n\nclass Settings(BaseSettings):\n    PROJECT_NAME: str = \"Book Management Service\"\n    VERSION: str = \"1.0.0\"\n    DATABASE_URL: str = \"sqlite+aiosqlite:///./books.db\"\n    CORS_ORIGINS: list[str] = [\"*\"]\n\n    class Config:\n        env_file = \".env\"\n        case_sensitive = True\n\n\nsettings = Settings()\n",
+          "description": "配置管理，支持环境变量读取"
+        },
+        {
+          "path": "domain/entities.py",
+          "content": "\nfrom __future__ import annotations\nfrom dataclasses import dataclass\nfrom typing import Optional\n\n\n@dataclass\nclass Book:\n    id: Optional[int] = None\n    title: str\n    author: str\n    isbn: str\n    publish_year: int\n    stock: int\n\n    def increase_stock(self, quantity: int) -> None:\n        if quantity <= 0:\n            raise ValueError(\"数量必须为正整数\")\n        self.stock += quantity\n\n    def decrease_stock(self, quantity: int) -> None:\n        if quantity <= 0:\n            raise ValueError(\"数量必须为正整数\")\n        if self.stock < quantity:\n            raise ValueError(\"库存不足\")\n        self.stock -= quantity\n",
+          "description": "核心业务实体，不含任何框架依赖"
+        },
+        {
+          "path": "domain/exceptions.py",
+          "content": "\n\nclass DomainException(Exception):\n    status_code: int = 400\n    code: str = \"DOMAIN_ERROR\"\n\n    def __init__(self, message: str, details: dict | None = None):\n        self.message = message\n        self.details = details or {}\n\n\nclass NotFoundException(DomainException):\n    status_code = 404\n    code = \"NOT_FOUND\"\n\n\nclass ConflictException(DomainException):\n    status_code = 409\n    code = \"CONFLICT\"\n\n\nclass ValidationException(DomainException):\n    status_code = 422\n    code = \"VALIDATION_FAILED\"\n",
+          "description": "领域层自定义异常，用于区分业务与系统错误"
+        },
+        {
+          "path": "adapters/registry.py",
+          "content": "\nfrom sqlalchemy.orm import registry\n\nmapper_registry = registry()\n",
+          "description": "SQLAlchemy mapper registry 常量，避免循环 import"
+        },
+        {
+          "path": "adapters/tables.py",
+          "content": "\nfrom sqlalchemy import Column, Integer, String\nfrom adapters.registry import mapper_registry\n\nbooks_table = mapper_registry.metadata.tables.get(\"books\")\nif books_table is None:\n    books_table = mapper_registry.metadata.Table(\n        \"books\",\n        mapper_registry.metadata,\n        Column(\"id\", Integer, primary_key=True, autoincrement=True),\n        Column(\"title\", String(255), nullable=False),\n        Column(\"author\", String(255), nullable=False),\n        Column(\"isbn\", String(13), unique=True, nullable=False),\n        Column(\"publish_year\", Integer, nullable=False),\n        Column(\"stock\", Integer, nullable=False),\n    )\n",
+          "description": "数据库表定义，仅依赖 registry 常量"
+        },
+        {
+          "path": "adapters/orm.py",
+          "content": "\nfrom sqlalchemy.orm import relationship\nfrom adapters.registry import mapper_registry\nfrom adapters.tables import books_table\nfrom domain.entities import Book\n\n# 延后 import 避免循环\ndef start_mappers():\n    mapper_registry.map_imperatively(\n        Book,\n        books_table,\n        properties={},\n    )\n",
+          "description": "ORM Mapper 启动，将领域模型与表绑定"
+        },
+        {
+          "path": "adapters/repositories/book_repository.py",
+          "content": "\nfrom typing import Optional\nfrom sqlalchemy.ext.asyncio import AsyncSession\nfrom sqlalchemy import select, and_, or_\nfrom domain.entities import Book\nfrom domain.repositories import BookRepository, SearchFilter\nfrom adapters.orm import start_mappers  # noqa: 仅确保 mapper 已启动\n\n\nclass SqlAlchemyBookRepository(BookRepository):\n    def __init__(self, session: AsyncSession):\n        self.session = session\n\n    async def create(self, book: Book) -> Book:\n        self.session.add(book)\n        await self.session.flush()\n        await self.session.refresh(book)\n        return book\n\n    async def get_by_id(self, book_id: int) -> Optional[Book]:\n        result = await self.session.execute(\n            select(Book).where(Book.id == book_id)\n        )\n        return result.scalar_one_or_none()\n\n    async def get_by_isbn(self, isbn: str) -> Optional[Book]:\n        result = await self.session.execute(\n            select(Book).where(Book.isbn == isbn)\n        )\n        return result.scalar_one_or_none()\n\n    async def update(self, book: Book) -> Book:\n        await self.session.merge(book)\n        await self.session.flush()\n        await self.session.refresh(book)\n        return book\n\n    async def delete(self, book_id: int) -> None:\n        book = await self.get_by_id(book_id)\n        if book:\n            await self.session.delete(book)\n\n    async def list_paginated(\n        self, page: int, size: int, search: SearchFilter\n    ) -> tuple[list[Book], int]:\n        stmt = select(Book)\n        conditions = []\n        if search.title:\n            conditions.append(Book.title.ilike(f\"%{search.title}%\"))\n        if search.author:\n            conditions.append(Book.author.ilike(f\"%{search.author}%\"))\n        if search.isbn:\n            conditions.append(Book.isbn == search.isbn)\n        if conditions:\n            stmt = stmt.where(and_(*conditions))\n\n        total = await self.session.execute(\n            select(select(Book).where(and_(*conditions)).subquery())\n        )\n        total_count = total.scalar()\n        stmt = stmt.limit(size).offset((page - 1) * size)\n        result = await self.session.execute(stmt)\n        items = result.scalars().all()\n        return list(items), total_count\n",
+          "description": "BookRepository 的 SQLAlchemy 实现"
+        },
+        {
+          "path": "domain/repositories.py",
+          "content": "\nfrom abc import ABC, abstractmethod\nfrom typing import Optional, Tuple, List\nfrom domain.entities import Book\n\n\nclass SearchFilter:\n    def __init__(\n        self,\n        title: Optional[str] = None,\n        author: Optional[str] = None,\n        isbn: Optional[str] = None,\n    ):\n        self.title = title\n        self.author = author\n        self.isbn = isbn\n\n\nclass BookRepository(ABC):\n    @abstractmethod\n    async def create(self, book: Book) -> Book:\n        raise NotImplementedError\n\n    @abstractmethod\n    async def get_by_id(self, book_id: int) -> Optional[Book]:\n        raise NotImplementedError\n\n    @abstractmethod\n    async def get_by_isbn(self, isbn: str) -> Optional[Book]:\n        raise NotImplementedError\n\n    @abstractmethod\n    async def update(self, book: Book) -> Book:\n        raise NotImplementedError\n\n    @abstractmethod\n    async def delete(self, book_id: int) -> None:\n        raise NotImplementedError\n\n    @abstractmethod\n    async def list_paginated(\n        self, page: int, size: int, search: SearchFilter\n    ) -> Tuple[List[Book], int]:\n        raise NotImplementedError\n",
+          "description": "持久化接口抽象，领域层定义"
+        },
+        {
+          "path": "domain/services.py",
+          "content": "\nfrom typing import Optional\nfrom domain.entities import Book\nfrom domain.repositories import BookRepository, SearchFilter\nfrom domain.exceptions import ConflictException, NotFoundException, ValidationException\nfrom adapters.dtos import CreateBookDTO, UpdateBookDTO, BookDTO, PageDTO\n\n\nclass BookCRUDService:\n    def __init__(self, repo: BookRepository):\n        self.repo = repo\n\n    async def create_book(self, cmd: CreateBookDTO) -> BookDTO:\n        # 校验 ISBN 唯一\n        exist = await self.repo.get_by_isbn(cmd.isbn)\n        if exist:\n            raise ConflictException(\"ISBN 已存在\")\n        book = Book(\n            title=cmd.title,\n            author=cmd.author,\n            isbn=cmd.isbn,\n            publish_year=cmd.publish_year,\n            stock=cmd.stock,\n        )\n        saved = await self.repo.create(book)\n        return BookDTO.from_entity(saved)\n\n    async def update_book(self, book_id: int, cmd: UpdateBookDTO) -> BookDTO:\n        book = await self.repo.get_by_id(book_id)\n        if not book:\n            raise NotFoundException(\"图书不存在\")\n        # 如果修改了 ISBN，需检查唯一性\n        if cmd.isbn and cmd.isbn != book.isbn:\n            exist = await self.repo.get_by_isbn(cmd.isbn)\n            if exist:\n                raise ConflictException(\"ISBN 已存在\")\n        book.title = cmd.title or book.title\n        book.author = cmd.author or book.author\n        book.isbn = cmd.isbn or book.isbn\n        book.publish_year = cmd.publish_year or book.publish_year\n        if cmd.stock is not None:\n            book.stock = cmd.stock\n        updated = await self.repo.update(book)\n        return BookDTO.from_entity(updated)\n\n    async def get_book(self, book_id: int) -> BookDTO:\n        book = await self.repo.get_by_id(book_id)\n        if not book:\n            raise NotFoundException(\"图书不存在\")\n        return BookDTO.from_entity(book)\n\n    async def delete_book(self, book_id: int) -> None:\n        book = await self.repo.get_by_id(book_id)\n        if not book:\n            raise NotFoundException(\"图书不存在\")\n        await self.repo.delete(book_id)\n\n    async def list_books(\n        self, page: int, size: int, q_title: Optional[str], q_author: Optional[str], q_isbn: Optional[str]\n    ) -> PageDTO[BookDTO]:\n        search = SearchFilter(title=q_title, author=q_author, isbn=q_isbn)\n        items, total = await self.repo.list_paginated(page, size, search)\n        return PageDTO(\n            total=total,\n            page=page,\n            size=size,\n            items=[BookDTO.from_entity(b) for b in items],\n        )\n",
+          "description": "应用服务层，编排业务逻辑"
+        },
+        {
+          "path": "adapters/dtos.py",
+          "content": "\nfrom typing import Optional, List, Generic, TypeVar\nfrom pydantic import BaseModel, Field, field_validator\nfrom domain.entities import Book\n\n\nT = TypeVar(\"T\")\n\n\nclass CreateBookDTO(BaseModel):\n    title: str = Field(..., min_length=1, max_length=255)\n    author: str = Field(..., min_length=1, max_length=255)\n    isbn: str = Field(..., regex=r\"^\\d{13}$\")\n    publish_year: int = Field(..., ge=1900, le=2100)\n    stock: int = Field(..., ge=0)\n\n    @field_validator(\"isbn\")\n    def isbn_must_be_13_digits(cls, v):\n        if len(v) != 13 or not v.isdigit():\n            raise ValueError(\"ISBN 必须为 13 位数字\")\n        return v\n\n\nclass UpdateBookDTO(BaseModel):\n    title: Optional[str] = Field(None, min_length=1, max_length=255)\n    author: Optional[str] = Field(None, min_length=1, max_length=255)\n    isbn: Optional[str] = Field(None, regex=r\"^\\d{13}$\")\n    publish_year: Optional[int] = Field(None, ge=1900, le=2100)\n    stock: Optional[int] = Field(None, ge=0)\n\n\nclass BookDTO(BaseModel):\n    id: int\n    title: str\n    author: str\n    isbn: str\n    publish_year: int\n    stock: int\n\n    @staticmethod\n    def from_entity(book: Book) -> \"BookDTO\":\n        return BookDTO(\n            id=book.id,\n            title=book.title,\n            author=book.author,\n            isbn=book.isbn,\n            publish_year=book.publish_year,\n            stock=book.stock,\n        )\n\n\nclass PageDTO(BaseModel, Generic[T]):\n    total: int\n    page: int\n    size: int\n    items: List[T]\n",
+          "description": "输入/输出 DTO，负责序列化与校验"
+        },
+        {
+          "path": "adapters/entrypoints/book_controller.py",
+          "content": "\nfrom fastapi import APIRouter, Depends, Query, status\nfrom typing import Optional\nfrom sqlalchemy.ext.asyncio import AsyncSession\nfrom adapters.dtos import CreateBookDTO, UpdateBookDTO, BookDTO, PageDTO\nfrom domain.services import BookCRUDService\nfrom adapters.repositories.book_repository import SqlAlchemyBookRepository\nfrom adapters.database import get_session\n\nrouter = APIRouter()\n\n\ndef get_service(session: AsyncSession = Depends(get_session)) -> BookCRUDService:\n    repo = SqlAlchemyBookRepository(session)\n    return BookCRUDService(repo)\n\n\n@router.post(\"/books\", response_model=BookDTO, status_code=status.HTTP_201_CREATED)\nasync def create_book(cmd: CreateBookDTO, service: BookCRUDService = Depends(get_service)):\n    return await service.create_book(cmd)\n\n\n@router.get(\"/books/{book_id}\", response_model=BookDTO)\nasync def get_book(book_id: int, service: BookCRUDService = Depends(get_service)):\n    return await service.get_book(book_id)\n\n\n@router.put(\"/books/{book_id}\", response_model=BookDTO)\nasync def update_book(\n    book_id: int, cmd: UpdateBookDTO, service: BookCRUDService = Depends(get_service)\n):\n    return await service.update_book(book_id, cmd)\n\n\n@router.delete(\"/books/{book_id}\", status_code=status.HTTP_204_NO_CONTENT)\nasync def delete_book(book_id: int, service: BookCRUDService = Depends(get_service)):\n    await service.delete_book(book_id)\n\n\n@router.get(\"/books\", response_model=PageDTO[BookDTO])\nasync def list_books(\n    page: int = Query(1, ge=1),\n    size: int = Query(10, ge=1, le=100),\n    q_title: Optional[str] = Query(None, alias=\"title\"),\n    q_author: Optional[str] = Query(None, alias=\"author\"),\n    q_isbn: Optional[str] = Query(None, alias=\"isbn\"),\n    service: BookCRUDService = Depends(get_service),\n):\n    return await service.list_books(page, size, q_title, q_author, q_isbn)\n",
+          "description": "FastAPI 路由层，依赖注入与响应序列化"
+        },
+        {
+          "path": "adapters/database.py",
+          "content": "\nfrom sqlalchemy.ext.asyncio import AsyncSession, create_async_engine\nfrom sqlalchemy.orm import sessionmaker\nfrom config import settings\n\nengine = create_async_engine(\n    settings.DATABASE_URL,\n    echo=False,\n    future=True,\n)\n\nasync_session = sessionmaker(\n    engine,\n    class_=AsyncSession,\n    expire_on_commit=False,\n)\n\n\nasync def get_session() -> AsyncSession:\n    async with async_session() as session:\n        yield session\n",
+          "description": "数据库连接与依赖注入"
+        },
+        {
+          "path": "alembic/env.py",
+          "content": "\nimport asyncio\nfrom logging.config import fileConfig\nfrom sqlalchemy import pool\nfrom sqlalchemy.engine import Connection\nfrom sqlalchemy.ext.asyncio import async_engine_from_config\nfrom alembic import context\nfrom adapters.registry import mapper_registry\nfrom config import settings\n\nconfig = context.config\nfileConfig(config.config_file_name)\ntarget_metadata = mapper_registry.metadata\n\n\ndef run_migrations_offline() -> None:\n    url = settings.DATABASE_URL\n    context.configure(\n        url=url,\n        target_metadata=target_metadata,\n        literal_binds=True,\n        dialect_opts={\"paramstyle\": \"named\"},\n    )\n    with context.begin_transaction():\n        context.run_migrations()\n\n\ndef do_run_migrations(connection: Connection) -> None:\n    context.configure(connection=connection, target_metadata=target_metadata)\n    with context.begin_transaction():\n        context.run_migrations()\n\n\nasync def run_async_migrations() -> None:\n    configuration = config.get_section(config.config_ini_section)\n    configuration[\"sqlalchemy.url\"] = settings.DATABASE_URL\n    connectable = async_engine_from_config(\n        configuration,\n        prefix=\"sqlalchemy.\",\n        poolclass=pool.NullPool,\n    )\n    async with connectable.connect() as connection:\n        await connection.run_sync(do_run_migrations)\n    await connectable.dispose()\n\n\ndef run_migrations_online() -> None:\n    asyncio.run(run_async_migrations())\n\n\nif context.is_offline_mode():\n    run_migrations_offline()\nelse:\n    run_migrations_online()\n",
+          "description": "Alembic 迁移环境配置"
+        }
+      ],
+      "test_files": [],
+      "execution_time": 239.95704293251038,
+      "total_lines": 564,
+      "has_tests": false,
+      "quality_score": 70,
+      "issues": [
+        {
+          "severity": "high",
+          "category": "完整性",
+          "location": "app.py:11",
+          "description": "未找到模块 error_handlers，导致 import 失败，程序无法启动",
+          "suggestion": "补充缺失的 error_handlers.py，或删除该 import 并在 FastAPI 中注册全局异常处理器"
+        },
+        {
+          "severity": "high",
+          "category": "完整性",
+          "location": "adapters/orm.py:1",
+          "description": "从 adapters.tables 导入 books_table，但 tables.py 与 orm.py 存在循环 import（tables.py 又 import orm），导致运行时 ImportError",
+          "suggestion": "将 mapper_registry 提取到单独 constants/registry.py，tables.py 仅依赖 registry 常量，orm.py 延后 import start_mappers，避免循环引用"
+        },
+        {
+          "severity": "medium",
+          "category": "质量",
+          "location": "adapters/controllers/book_controller.py:95",
+          "description": "list_books 返回 dict 而非 Pydantic 模型，破坏类型安全与自动生成文档",
+          "suggestion": "新增 ListBooksResponse(BaseModel) 封装 items/total/pages/links，控制器直接返回该模型，保持类型一致性"
+        },
+        {
+          "severity": "medium",
+          "category": "性能",
+          "location": "adapters/repositories/book_repository_impl.py:45",
+          "description": "分页查询未使用覆盖索引，且未 LIMIT + 1 方式判断是否存在下一页，百万级数据 P99 可能超标",
+          "suggestion": "在 (id) 或 (id, title, author) 上建立索引；查询时 SELECT ... FROM books WHERE ... ORDER BY id DESC LIMIT :size OFFSET :offset，并多取 1 条用于快速判断 has_next，提高分页性能"
+        },
+        {
+          "severity": "medium",
+          "category": "安全",
+          "location": "adapters/repositories/book_repository_impl.py:35",
+          "description": "ilike 拼接 %search% 仍可能被恶意 LIKE 模式消耗 CPU（ReDoS）",
+          "suggestion": "对 title/author 入参做长度限制（如 ≤ 64）并转义 SQL LIKE 特殊字符（%, _, \\），或改用全文索引（SQLite FTS5）"
+        },
+        {
+          "severity": "medium",
+          "category": "测试",
+          "location": "所有模块",
+          "description": "未提供测试文件，覆盖率 0%，不符合设计目标 ≥ 80%",
+          "suggestion": "在 tests/ 下为 BookService、BookRepositoryImpl、Controller 编写 pytest 用例，使用内存 SQLite + TestClient，覆盖正常/异常/边界路径"
+        },
+        {
+          "severity": "low",
+          "category": "最佳实践",
+          "location": "domain/entities/book.py:10",
+          "description": "使用可变默认参数空字符串，可能导致共享状态 Bug",
+          "suggestion": "保持默认 None，内部赋空字符串，或使用 dataclass 的 field(default_factory=str)"
+        },
+        {
+          "severity": "low",
+          "category": "最佳实践",
+          "location": "config.py:6",
+          "description": "pydantic BaseSettings 已默认 utf-8 读取 .env，声明 env_file_encoding 冗余",
+          "suggestion": "删除 Config 内部类，使用 model_config = SettingsConfigDict(env_file='.env')（Pydantic v2 推荐写法）"
+        },
+        {
+          "severity": "low",
+          "category": "性能",
+          "location": "app.py:20",
+          "description": "每次请求都新建 sessionmaker 实例，对象创建开销虽小但无必要",
+          "suggestion": "在 lifespan 中只创建一次 sessionmaker，全局复用"
+        }
+      ],
+      "phases": 5
+    }
+  },
+  {
+    "task": {
+      "id": 5,
+      "name": "复杂任务：网络爬虫",
+      "description": "创建一个网络爬虫：爬取新闻网站标题和链接、支持多页爬取、错误重试、保存到 CSV、遵守 robots.txt",
+      "complexity": "复杂"
+    },
+    "single_llm": {
+      "files": [
+        {
+          "path": "news_spider.py",
+          "content": "# filename: news_spider.py\n\"\"\"\n通用新闻标题与链接爬虫\n- 支持多页翻页\n- 自动重试与错误恢复\n- 结果写入 CSV\n- 遵守目标站 robots.txt\n依赖：pip install requests beautifulsoup4 urllib.robotparser\n\"\"\"\n\nimport csv\nimport os\nimport random\nimport time\nfrom typing import List, Dict, Optional\nfrom urllib.parse import urljoin, urlparse, robotparser\n\nimport requests\nfrom bs4 import BeautifulSoup\n\n# -------------------- 配置区 --------------------\nBASE_URL = \"https://news.ycombinator.com\"  # 示例：Hacker News\nSTART_PAGE = \"/\"\nMAX_PAGES = 3\nCSV_FILE = \"news.csv\"\nRETRY_TIMES = 3\nRETRY_BACKOFF = 2  # 指数退避基数\nREQUEST_TIMEOUT = 10\nUSER_AGENTS = [\n    \"Mozilla/5.0 (Windows NT 10.0; Win64; x64)\",\n    \"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)\",\n    \"Mozilla/5.0 (X11; Linux x86_64)\",\n]\n# ----------------------------------------------\n\n\ndef polite_delay() -> None:\n    \"\"\"礼貌延迟：1~3 秒随机等待\"\"\"\n    time.sleep(random.uniform(1, 3))\n\n\ndef can_fetch(url: str, user_agent: str) -> bool:\n    \"\"\"检查 robots.txt 是否允许抓取\"\"\"\n    try:\n        rp = robotparser.RobotFileParser()\n        rp.set_url(urljoin(url, \"/robots.txt\"))\n        rp.read()\n        return rp.can_fetch(user_agent, url)\n    except Exception:\n        # 如果 robots.txt 无法读取，保守起见返回 False\n        return False\n\n\ndef fetch_page(session: requests.Session, url: str) -> Optional[str]:\n    \"\"\"带重试的页面下载\"\"\"\n    headers = {\"User-Agent\": random.choice(USER_AGENTS)}\n    for attempt in range(1, RETRY_TIMES + 1):\n        try:\n            resp = session.get(url, headers=headers, timeout=REQUEST_TIMEOUT)\n            resp.raise_for_status()\n            return resp.text\n        except requests.RequestException as e:\n            print(f\"[WARN] 第 {attempt} 次抓取失败：{e}\")\n            if attempt < RETRY_TIMES:\n                wait = RETRY_BACKOFF ** attempt\n                print(f\"[INFO] 等待 {wait}s 后重试...\")\n                time.sleep(wait)\n    return None\n\n\ndef parse_list_page(html: str, base_url: str) -> List[Dict[str, str]]:\n    \"\"\"解析列表页：提取标题+链接\"\"\"\n    soup = BeautifulSoup(html, \"lxml\")\n    items = []\n    for a in soup.select(\"a.storylink\"):  # HN 特定选择器\n        title = a.get_text(strip=True)\n        href = a[\"href\"]\n        # 相对链接转绝对\n        href = urljoin(base_url, href)\n        items.append({\"title\": title, \"link\": href})\n    return items\n\n\ndef get_next_page_url(html: str, base_url: str) -> Optional[str]:\n    \"\"\"提取“下一页”链接（HN 示例）\"\"\"\n    soup = BeautifulSoup(html, \"lxml\")\n    more = soup.select_one(\"a.morelink\")\n    if more:\n        return urljoin(base_url, more[\"href\"])\n    return None\n\n\ndef save_to_csv(rows: List[Dict[str, str]], filename: str) -> None:\n    \"\"\"追加写入 CSV\"\"\"\n    fieldnames = [\"title\", \"link\"]\n    exists = os.path.isfile(filename)\n    with open(filename, \"a\", encoding=\"utf-8\", newline=\"\") as f:\n        writer = csv.DictWriter(f, fieldnames=fieldnames)\n        if not exists:\n            writer.writeheader()\n        writer.writerows(rows)\n\n\ndef main():\n    session = requests.Session()\n    current_url = urljoin(BASE_URL, START_PAGE)\n    crawled_pages = 0\n    user_agent = USER_AGENTS[0]\n\n    # robots.txt 检查\n    if not can_fetch(BASE_URL, user_agent):\n        print(\"[ERROR] robots.txt 禁止抓取，程序终止。\")\n        return\n\n    while crawled_pages < MAX_PAGES and current_url:\n        print(f\"[INFO] 正在抓取第 {crawled_pages + 1} 页：{current_url}\")\n        html = fetch_page(session, current_url)\n        if not html:\n            print(f\"[ERROR] 页面下载失败，跳过：{current_url}\")\n            break\n\n        articles = parse_list_page(html, BASE_URL)\n        if not articles:\n            print(\"[WARN] 未解析到任何文章，可能页面结构变化。\")\n        else:\n            save_to_csv(articles, CSV_FILE)\n            print(f\"[INFO] 本页抓取 {len(articles)} 条，已保存。\")\n\n        polite_delay()\n\n        # 获取下一页\n        next_url = get_next_page_url(html, BASE_URL)\n        if not next_url:\n            print(\"[INFO] 已到达最后一页。\")\n            break\n        current_url = next_url\n        crawled_pages += 1\n\n    print(f\"[INFO] 抓取完成，共处理 {crawled_pages} 页，结果保存在 {CSV_FILE}\")\n\n\nif __name__ == \"__main__\":\n    main()"
+        }
+      ],
+      "execution_time": 15.701885223388672,
+      "total_lines": 143,
+      "has_tests": false,
+      "tokens": 1228
+    },
+    "autodev": {
+      "files": [
+        {
+          "path": "requirements.txt",
+          "content": "aiofiles>=0.8\naiohttp>=3.8\nbeautifulsoup4>=4.11\nclick>=8.0\nlxml>=4.9\ntenacity>=8.0\ntqdm>=4.64",
+          "description": "项目依赖"
+        },
+        {
+          "path": "main.py",
+          "content": "import asyncio\nimport logging\nimport signal\nfrom pathlib import Path\n\nimport click\n\nfrom scheduler import Scheduler\nfrom downloader import Downloader\nfrom parser_plugin import parse_news_list\nfrom csv_sink import CSVSink\nfrom robot_checker import RobotChecker\nfrom logger import init_logger\n\n# 全局优雅退出事件\nshutdown_event = asyncio.Event()\n\ndef _signal_handler(signum, frame):\n    shutdown_event.set()\n\n@click.command()\n@click.option(\"--start-url\", required=True, help=\"新闻列表起始 URL\")\n@click.option(\"--max-pages\", default=10, help=\"最大分页深度\")\n@click.option(\"--retry\", default=3, help=\"单请求最大重试次数\")\n@click.option(\"--output\", default=\"news.csv\", help=\"输出 CSV 文件\")\n@click.option(\"--concurrency\", default=10, help=\"并发协程数上限\")\n@click.option(\"--delay\", default=1.0, help=\"同域请求间隔（秒）\")\ndef main(start_url, max_pages, retry, output, concurrency, delay):\n    \"\"\"异步新闻爬虫：遵守 robots、支持重试、实时写 CSV、可续爬\"\"\"\n    init_logger()\n    loop = asyncio.get_event_loop()\n    for sig in (signal.SIGINT, signal.SIGTERM):\n        loop.add_signal_handler(sig, _signal_handler)\n    try:\n        loop.run_until_complete(\n            async_main(start_url, max_pages, retry, output, concurrency, delay)\n        )\n    finally:\n        loop.close()\n\nasync def async_main(start_url, max_pages, retry, output, concurrency, delay):\n    scheduler = Scheduler(max_depth=max_pages)\n    downloader = Downloader(retry=retry, delay=delay)\n    sink = CSVSink(output)\n    robot_checker = RobotChecker()\n\n    # 预加载已抓 URL，避免重复\n    await sink.load_existing_urls()\n\n    # 初始任务\n    await scheduler.add(start_url, depth=1)\n\n    # 启动 worker\n    workers = [\n        asyncio.create_task(\n            worker(scheduler, downloader, sink, robot_checker)\n        )\n        for _ in range(concurrency)\n    ]\n\n    # 等待调度完成或外部中断\n    await shutdown_event.wait()\n    await scheduler.join()\n    # 发送 sentinel 让 worker 优雅退出\n    for _ in workers:\n        await scheduler.add(None, depth=-1)\n\n    # 等待所有 worker 结束\n    await asyncio.gather(*workers)\n    await sink.close()\n\nasync def worker(scheduler, downloader, sink, robot_checker):\n    \"\"\"单 worker 协程：取任务 → 下载 → 解析 → 写 CSV\"\"\"\n    while True:\n        item = await scheduler.get()\n        if item is None:  # sentinel\n            break\n        url, depth = item\n        try:\n            if not robot_checker.can_fetch(url):\n                logging.info(f\"[robots] skip {url}\")\n                continue\n            status, html = await downloader.fetch(url)\n            if status != 200:\n                logging.error(f\"[http] {status} {url}\")\n                continue\n            titles, links, next_page = parse_news_list(html, url)\n            # 写 CSV（按 URL 去重）\n            for title, link in zip(titles, links):\n                if not sink.has_url(link):\n                    await sink.write(title, link)\n            # 提交下一页\n            if next_page and depth < scheduler.max_depth:\n                await scheduler.add(next_page, depth=depth + 1)\n            # 提交详情页（深度不变）\n            for link in links:\n                await scheduler.add(link, depth=depth)\n        except Exception as exc:\n            logging.exception(f\"[worker] {url} -> {exc}\")",
+          "description": "CLI 入口与主事件循环"
+        },
+        {
+          "path": "scheduler.py",
+          "content": "import asyncio\nfrom urllib.parse import urljoin, urlparse\n\nclass Scheduler:\n    def __init__(self, max_depth: int):\n        self.max_depth = max_depth\n        self._queue = asyncio.Queue()\n        self._seen = set()\n\n    async def add(self, url: str, depth: int):\n        if url is None:  # sentinel\n            await self._queue.put(None)\n            return\n        if depth > self.max_depth:\n            return\n        if url in self._seen:\n            return\n        self._seen.add(url)\n        await self._queue.put((url, depth))\n\n    async def get(self):\n        return await self._queue.get()\n\n    async def join(self):\n        await self._queue.join()\n\n    def has_seen(self, url: str) -> bool:\n        return url in self._seen",
+          "description": "FIFO 任务队列与去重"
+        },
+        {
+          "path": "downloader.py",
+          "content": "import asyncio\nimport logging\nimport time\nfrom typing import Tuple\n\nimport aiohttp\nfrom tenacity import retry, stop_after_attempt, wait_exponential\n\nclass Downloader:\n    def __init__(self, retry: int, delay: float):\n        self.retry = retry\n        self.delay = delay\n        self._last_access = {}  # domain -> timestamp\n\n    async def fetch(self, url: str) -> Tuple[int, str]:\n        domain = self._get_domain(url)\n        await self._politeness_delay(domain)\n        async with aiohttp.ClientSession(\n            connector=aiohttp.TCPConnector(ssl=False, limit=100)\n        ) as session:\n            status, html = await self._fetch_with_retry(session, url)\n            self._last_access[domain] = time.time()\n            return status, html\n\n    async def _politeness_delay(self, domain: str):\n        last = self._last_access.get(domain, 0)\n        elapsed = time.time() - last\n        if elapsed < self.delay:\n            await asyncio.sleep(self.delay - elapsed)\n\n    @retry(\n        stop=stop_after_attempt(3),\n        wait=wait_exponential(multiplier=1, min=1, max=10),\n        reraise=True,\n    )\n    async def _fetch_with_retry(\n        self, session: aiohttp.ClientSession, url: str\n    ) -> Tuple[int, str]:\n        async with session.get(url, timeout=30) as resp:\n            html = await resp.text(errors=\"ignore\")\n            return resp.status, html\n\n    @staticmethod\n    def _get_domain(url: str) -> str:\n        from urllib.parse import urlparse\n        return urlparse(url).netloc",
+          "description": "异步下载 + 重试 + politeness"
+        },
+        {
+          "path": "parser_plugin.py",
+          "content": "from typing import List, Tuple, Optional\nfrom urllib.parse import urljoin\n\nfrom bs4 import BeautifulSoup\n\ndef parse_news_list(html: str, base_url: str) -> Tuple[List[str], List[str], Optional[str]]:\n    \"\"\"返回 (titles, absolute_links, next_page_url)\"\"\"\n    soup = BeautifulSoup(html, \"lxml\")\n    titles, links = [], []\n\n    # 通用策略：a 标签内含标题\n    for a in soup.select(\"a[href]\"):\n        text = a.get_text(strip=True)\n        if not text:\n            continue\n        href = urljoin(base_url, a[\"href\"])\n        titles.append(text)\n        links.append(href)\n\n    # 下一页：rel=next 或 »\n    next_page = None\n    for a in soup.select('a[rel=\"next\"], a:contains(\"»\"), a:contains(\"下一页\")'):\n        next_page = urljoin(base_url, a[\"href\"])\n        break\n    return titles, links, next_page",
+          "description": "通用新闻列表解析（可插件化扩展）"
+        },
+        {
+          "path": "csv_sink.py",
+          "content": "import asyncio\nimport csv\nimport os\nfrom pathlib import Path\nfrom typing import List\n\nimport aiofiles\n\nclass CSVSink:\n    def __init__(self, filename: str, batch_size: int = 100, flush_interval: float = 2.0):\n        self.filename = Path(filename)\n        self._batch: List[tuple] = []\n        self._urls = set()\n        self._lock = asyncio.Lock()\n        self._flush_task = None\n        self.batch_size = batch_size\n        self.flush_interval = flush_interval\n\n    async def load_existing_urls(self):\n        if not self.filename.exists():\n            return\n        async with aiofiles.open(self.filename, encoding=\"utf-8\") as f:\n            async for row in csv.DictReader(f):\n                self._urls.add(row[\"url\"])\n\n    async def write(self, title: str, url: str):\n        scraped_at = asyncio.get_event_loop().time()\n        async with self._lock:\n            if url in self._urls:\n                return\n            self._batch.append((title, url, scraped_at))\n            self._urls.add(url)\n            if len(self._batch) >= self.batch_size:\n                await self._flush()\n\n    async def has_url(self, url: str) -> bool:\n        async with self._lock:\n            return url in self._urls\n\n    async def _flush(self):\n        if not self._batch:\n            return\n        # 追加写\n        new_file = not self.filename.exists()\n        async with aiofiles.open(self.filename, \"a\", encoding=\"utf-8\", newline=\"\") as f:\n            writer = csv.writer(f)\n            if new_file:\n                await f.write(\"title,url,scraped_at\\n\")\n            for row in self._batch:\n                await f.write(\",\".join([f'\"{r}\"' for r in row]) + \"\\n\")\n        self._batch.clear()\n\n    async def _periodic_flush(self):\n        while True:\n            await asyncio.sleep(self.flush_interval)\n            async with self._lock:\n                await self._flush()\n\n    async def close(self):\n        if self._flush_task:\n            self._flush_task.cancel()\n            try:\n                await self._flush_task\n            except asyncio.CancelledError:\n                pass\n        async with self._lock:\n            await self._flush()\n\n    async def __aenter__(self):\n        self._flush_task = asyncio.create_task(self._periodic_flush())\n        return self\n\n    async def __aexit__(self, exc_type, exc, tb):\n        await self.close()",
+          "description": "异步批量写 CSV + URL 去重"
+        },
+        {
+          "path": "robot_checker.py",
+          "content": "import logging\nimport urllib.robotparser\nfrom urllib.parse import urlparse\n\nimport aiohttp\n\nclass RobotChecker:\n    def __init__(self):\n        self._cache = {}  # domain -> RobotFileParser\n\n    def can_fetch(self, url: str) -> bool:\n        domain = urlparse(url).netloc.lower()\n        if domain not in self._cache:\n            self._cache[domain] = self._load_robots(domain)\n        return self._cache[domain].can_fetch(\"*\", url)\n\n    def _load_robots(self, domain: str) -> urllib.robotparser.RobotFileParser:\n        rp = urllib.robotparser.RobotFileParser()\n        rp.set_url(f\"https://{domain}/robots.txt\")\n        try:\n            rp.read()\n        except Exception as exc:\n            logging.warning(f\"[robots] fail to load for {domain}: {exc}\")\n            # 默认允许\n            rp.allow_all = True\n        return rp",
+          "description": "缓存式 robots.txt 检查器"
+        },
+        {
+          "path": "logger.py",
+          "content": "import logging\nimport sys\n\ndef init_logger(level=logging.INFO):\n    logging.basicConfig(\n        level=level,\n        format=\"[%(asctime)s] %(levelname)s %(message)s\",\n        datefmt=\"%H:%M:%S\",\n        stream=sys.stderr,\n    )",
+          "description": "统一日志配置"
+        },
+        {
+          "path": "README.md",
+          "content": "# 异步新闻爬虫\n\n## 安装",
+          "description": "使用说明"
+        }
+      ],
+      "test_files": [],
+      "execution_time": 144.3287410736084,
+      "total_lines": 318,
+      "has_tests": false,
+      "quality_score": 52,
+      "issues": [
+        {
+          "severity": "high",
+          "category": "完整性",
+          "location": "parser_plugin.py:2",
+          "description": "缺少第三方依赖 beautifulsoup4 / lxml，代码无法直接运行",
+          "suggestion": "在 requirements.txt 中显式列出 beautifulsoup4>=4.11 lxml>=4.9"
+        },
+        {
+          "severity": "high",
+          "category": "完整性",
+          "location": "downloader.py:8",
+          "description": "缺少第三方依赖 aiohttp、tenacity，代码无法直接运行",
+          "suggestion": "在 requirements.txt 中显式列出 aiohttp>=3.8 tenacity>=8.0"
+        },
+        {
+          "severity": "high",
+          "category": "完整性",
+          "location": "csv_sink.py:5",
+          "description": "缺少第三方依赖 aiofiles，代码无法直接运行",
+          "suggestion": "在 requirements.txt 中显式列出 aiofiles>=0.8"
+        },
+        {
+          "severity": "high",
+          "category": "质量",
+          "location": "main.py:42-49",
+          "description": "worker 任务在 scheduler.join() 完成后才被 cancel，可能丢失队列尾部任务",
+          "suggestion": "使用 asyncio.Event 或 sentinel 机制，让 worker 优雅退出；或在 join 前发送 None sentinel"
+        },
+        {
+          "severity": "high",
+          "category": "性能",
+          "location": "csv_sink.py:34-41",
+          "description": "每次写 CSV 都打开/关闭文件，且逐行 flush，高并发下磁盘 I/O 成为瓶颈",
+          "suggestion": "维护一个异步写队列 + 批量 flush，或每 N 条/每 T 秒 flush 一次"
+        },
+        {
+          "severity": "medium",
+          "category": "安全",
+          "location": "downloader.py:29",
+          "description": "resp.text 未限制大小，可能因恶意大页面导致内存暴涨",
+          "suggestion": "使用 aiohttp 的 content-length 或流式读取，设置最大 2~5 MB 阈值"
+        },
+        {
+          "severity": "medium",
+          "category": "质量",
+          "location": "robot_checker.py:18",
+          "description": "RobotChecker 内部又实例化一个 Downloader，导致重复连接池、politeness 参数不一致",
+          "suggestion": "通过依赖注入把公用的 Downloader 传进来，或单独建一个轻量 robots 下载器"
+        },
+        {
+          "severity": "medium",
+          "category": "性能",
+          "location": "scheduler.py:32",
+          "description": "has_seen 不加锁，可能并发读取脏数据",
+          "suggestion": "把 seen 查询也放进同一个 async lock 作用域"
+        },
+        {
+          "severity": "medium",
+          "category": "质量",
+          "location": "parser_plugin.py:15-16",
+          "description": "使用 CSS4 伪类选择器 :contains，lxml 不支持，可能返回空列表",
+          "suggestion": "改用 soup.find_all(text=re.compile('下一页|Next')) 再回溯父节点"
+        },
+        {
+          "severity": "medium",
+          "category": "安全",
+          "location": "csv_sink.py:40",
+          "description": "未对 title/url 中的双引号进行转义，可能破坏 CSV 格式甚至引发注入",
+          "suggestion": "使用标准库 csv.writer 的默认转义，或 aiofiles 打开后把 writerow 序列化"
+        },
+        {
+          "severity": "low",
+          "category": "质量",
+          "location": "downloader.py:26",
+          "description": "domain 提取方式简单 split，无法处理带端口或非标准 URL",
+          "suggestion": "使用 urlparse(url).netloc 作为 key"
+        },
+        {
+          "severity": "low",
+          "category": "质量",
+          "location": "main.py:27",
+          "description": "setup_logger 使用全局 basicConfig，重复调用会失效",
+          "suggestion": "保证只在主模块调用一次，或在函数内判断 logging.root.handlers"
+        },
+        {
+          "severity": "low",
+          "category": "测试",
+          "location": "全部文件",
+          "description": "无单元测试、无集成测试，无法回归验证",
+          "suggestion": "为 Downloader、Scheduler、CSVSink 编写 pytest-asyncio 用例"
+        }
+      ],
+      "phases": 5
+    }
+  }
+]
