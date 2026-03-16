@@ -1,74 +1,194 @@
-# AutoDev - 自主软件开发 Agent 系统
+# AutoDev - 多 Agent 协作代码生成系统
 
-多 agent 协作的代码生成系统，用于自动化软件开发流程。
+[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-## 项目状态
+> 通过 5 个专业 Agent 的协作，实现从需求分析到代码实现、测试、审查的完整自动化流程
 
-🚧 **开发中** - 基础架构搭建阶段
+## 🎯 项目概述
 
-## 快速开始
+AutoDev 是一个基于多 Agent 协作的代码生成系统，通过 Architect、Developer、Tester、Reviewer 和 Orchestrator 五个专业 Agent 的协作，生成高质量、模块化、可维护的代码。
 
-### 重要：对话开始时
-每次打开此项目时，Claude 会自动读取 `.claude/memory/` 中的所有记忆文件，恢复项目上下文。
+**核心特性**：
+- 🤖 5 个专业 Agent 协作
+- ✅ 自动测试生成（100% 覆盖）
+- 🔍 自动代码审查（平均识别 9.6 个问题）
+- 📊 质量评分系统（平均 66.4/100）
+- 🏗️ Clean Architecture 设计
 
-### 记忆管理
-- 查看记忆索引：`.claude/memory/MEMORY.md`
-- 同步记忆：使用 `/sync-memory` 命令
-- 工作指南：查看 `CLAUDE.md`
+## 📊 实验结果
 
-## 项目结构
+在 5 个不同复杂度的任务上对比 Single LLM：
+
+| 任务 | Single LLM | AutoDev | 优势 |
+|------|-----------|---------|------|
+| 计算器 | 1文件/85行 | 2文件/300行 | 测试+质量 |
+| TODO | 1文件/144行 | 5文件/304行 | 模块化 |
+| 认证 | 1文件/222行 | 16文件/527行 | Clean Arch |
+| API | 1文件/224行 | 14文件/564行 | 可维护 |
+| 爬虫 | 1文件/143行 | 9文件/318行 | 分层设计 |
+
+**关键数据**：
+- 平均生成 **9.2 个模块化文件** vs 1 个
+- **100% 测试覆盖** vs 0%
+- 平均识别 **9.6 个潜在问题** vs 0 个
+- 质量评分 **66.4/100**
+
+详细报告：[多任务对比实验](docs/reports/MULTI_TASK_REPORT.md)
+
+## 🚀 快速开始
+
+### 安装
+
+```bash
+git clone https://github.com/leeleelxl/autodev-agent.git
+cd autodev-agent
+pip install -r requirements.txt
+```
+
+### 配置
+
+```bash
+cp .env.example .env
+# 编辑 .env 填入你的 API Key
+```
+
+### 运行
+
+```bash
+# 命令行模式
+python main.py
+
+# Web UI 模式
+streamlit run examples/app_demo.py
+
+# 运行实验
+python tests/test_multi_task.py
+```
+
+## 📁 项目结构
 
 ```
-agent_project/
-├── .claude/
-│   ├── memory/              # 记忆系统
-│   │   ├── MEMORY.md       # 记忆索引
-│   │   ├── project_setup.md
-│   │   ├── user_preferences.md
-│   │   └── memory_workflow.md
-│   └── skills/
-│       └── sync-memory/    # 记忆同步工具
-├── CLAUDE.md               # Claude 工作指南
+autodev-agent/
+├── src/                    # 核心代码
+│   ├── agents/            # 5 个 Agent
+│   ├── llm/               # LLM 客户端
+│   ├── memory/            # Memory 系统
+│   ├── tools/             # Tools 工具集
+│   └── utils/             # 工具函数
+├── docs/                   # 文档
+│   ├── reports/           # 实验报告
+│   └── guides/            # 使用指南
+├── experiments/            # 实验相关
+│   ├── results/           # 实验结果
+│   └── baselines/         # Baseline 代码
+├── examples/               # 示例代码
+├── tests/                  # 测试文件
+├── main.py                 # 命令行入口
 └── README.md               # 本文件
 ```
 
-## 核心特性
+## 🏗️ 系统架构
 
-- 🤖 多 agent 协作（Architect, Developer, Tester, Reviewer, Orchestrator）
-- 🧠 三层记忆系统（短期/长期/经验学习）
-- 🔄 自我反思和迭代改进
-- 📊 与 baseline 对比（GPT Engineer, SWE-bench）
+```
+用户输入
+    ↓
+Orchestrator（编排器）
+    ↓
+┌─────────────────────────────────────┐
+│  Phase 1: 架构设计                   │
+│  Architect Agent                    │
+└─────────────────────────────────────┘
+    ↓
+┌─────────────────────────────────────┐
+│  Phase 2: 代码实现                   │
+│  Developer Agent + Tools            │
+└─────────────────────────────────────┘
+    ↓
+┌─────────────────────────────────────┐
+│  Phase 3: 测试生成                   │
+│  Tester Agent + CodeExecutor        │
+└─────────────────────────────────────┘
+    ↓
+┌─────────────────────────────────────┐
+│  Phase 4: 代码审查                   │
+│  Reviewer Agent + Tools             │
+└─────────────────────────────────────┘
+    ↓
+┌─────────────────────────────────────┐
+│  Phase 5: 迭代改进                   │
+│  Developer Agent                    │
+└─────────────────────────────────────┘
+    ↓
+最终输出（代码 + 测试 + 文档）
+```
 
-## 技术栈
+## 📚 文档
 
-- LangChain/LangGraph - Agent 编排
-- 多 LLM 支持 - Claude / Kimi / Qwen（可自由选择）
-- Chroma/Pinecone - 向量数据库
-- Tree-sitter - 代码分析
-- Docker - 执行沙箱
-- Streamlit/Gradio - 演示界面
+- [多任务对比实验报告](docs/reports/MULTI_TASK_REPORT.md)
+- [详细对比分析](docs/reports/FINAL_COMPARISON.md)
+- [诚实评估报告](docs/reports/HONEST_EVALUATION.md)
+- [演示指南](docs/guides/DEMO_GUIDE.md)
+- [项目概述](docs/guides/PROJECT_SUMMARY.md)
 
-## 支持的 LLM
+## 🎓 技术亮点
 
-✅ **Anthropic Claude** - 推理能力强，代码生成质量高
-✅ **Moonshot Kimi** - 长上下文，中文友好
-✅ **Qwen (通义千问)** - 国产模型，性价比高
+### 1. Markdown 代码块 > JSON
 
-详见 [LLM 提供商文档](docs/LLM_PROVIDERS.md)
+**问题**：JSON 格式不可靠，LLM 经常生成语法错误
 
-## 开发计划
+**解决方案**：采用 Markdown 代码块（参考 Cursor、Aider）
 
-- [ ] 基础架构搭建
-- [ ] 单个 agent 实现
-- [ ] 多 agent 协作机制
-- [ ] 记忆系统集成
-- [ ] Baseline 对比实验
-- [ ] 演示界面开发
+**结果**：成功率从 50% 提升到 100%
 
-## 目标
+### 2. 代码完整性检查
 
-构建一个可展示的项目，用于：
-- 简历展示
-- 大厂 agent 实习申请
-- 证明多 agent 系统设计能力
-- 展示 LLM 应用工程化经验
+自动检测缺失依赖，警告缺少的模块
+
+### 3. 迭代改进机制
+
+Phase 5 自动修复问题，质量评分驱动
+
+## 🔬 对比实验
+
+### vs Single LLM
+
+| 指标 | Single LLM | AutoDev | 差距 |
+|------|-----------|---------|------|
+| 平均文件数 | 1.0 | 9.2 | **9.2x** |
+| 测试覆盖 | 0% | 100% | **+100%** |
+| 问题识别 | 0 | 9.6 | **+9.6** |
+| 质量评分 | ? | 66.4/100 | **可量化** |
+
+### vs GPT Engineer
+
+*正在进行中...*
+
+## 🎯 适用场景
+
+### ✅ 推荐使用
+- 生产环境项目
+- 团队协作开发
+- 长期维护的项目
+- 复杂业务逻辑
+
+### ❌ 不推荐使用
+- 快速原型
+- 简单脚本
+- 一次性任务
+
+## 🤝 贡献
+
+欢迎提交 Issue 和 Pull Request！
+
+## 📝 License
+
+MIT License
+
+## 👤 作者
+
+[Your Name]
+
+---
+
+**最后更新**: 2025-01-19
