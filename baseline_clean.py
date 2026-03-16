@@ -1,4 +1,3 @@
-```python
 import sqlite3
 import hashlib
 import jwt
@@ -122,4 +121,3 @@ def verify(current_user):
 if __name__ == '__main__':
     init_db()
     app.run(debug=True)
-```
