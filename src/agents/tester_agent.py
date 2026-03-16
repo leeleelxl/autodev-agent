@@ -18,6 +18,11 @@ class TesterAgent(BaseAgent):
             role="测试工程师，负责测试用例生成和代码测试"
         )
         super().__init__(config)
+        self.code_executor = None
+
+    def set_tools(self, code_executor=None):
+        """设置工具"""
+        self.code_executor = code_executor
 
     async def process(self, task: str, context: Optional[Dict[str, Any]] = None) -> AgentResponse:
         """
@@ -40,10 +45,38 @@ class TesterAgent(BaseAgent):
         # 解析测试用例
         test_cases = self._parse_tests(response_content)
 
+        # 如果有代码执行器，运行测试
+        test_results = []
+        if self.code_executor and context.get("code_files"):
+            for test_file in test_cases:
+                test_code = test_file.get("content", "")
+
+                # 获取对应的主代码
+                main_code = self._get_main_code(test_file, context["code_files"])
+
+                if main_code:
+                    # 执行测试
+                    result = await self.code_executor.execute_with_tests(
+                        main_code,
+                        test_code,
+                        timeout=30
+                    )
+
+                    test_results.append({
+                        "test_file": test_file.get("path"),
+                        "success": result.success,
+                        "output": result.output,
+                        "error": result.error
+                    })
+
         self.add_message(Message(
             role="assistant",
             content=response_content,
-            metadata={"task": task, "phase": "testing"}
+            metadata={
+                "task": task,
+                "phase": "testing",
+                "test_results": test_results
+            }
         ))
 
         return AgentResponse(
@@ -53,9 +86,27 @@ class TesterAgent(BaseAgent):
             ],
             metadata={
                 "phase": "testing",
-                "test_cases": test_cases
+                "test_cases": test_cases,
+                "test_results": test_results
             }
         )
+
+    def _get_main_code(self, test_file: Dict, code_files: List[Dict]) -> Optional[str]:
+        """获取测试对应的主代码"""
+        test_path = test_file.get("path", "")
+
+        # 简单匹配：test_xxx.py -> xxx.py
+        if test_path.startswith("test_"):
+            main_path = test_path.replace("test_", "")
+            for code_file in code_files:
+                if code_file.get("path") == main_path:
+                    return code_file.get("content")
+
+        # 如果只有一个代码文件，直接返回
+        if len(code_files) == 1:
+            return code_files[0].get("content")
+
+        return None
 
     def _build_system_prompt(self) -> str:
         """构建系统提示词"""
@@ -90,11 +141,14 @@ class TesterAgent(BaseAgent):
         """构建用户提示词"""
         prompt = f"测试任务：\n{task}\n\n"
 
-        if context.get("code"):
-            prompt += f"待测试代码：\n{context['code']}\n\n"
+        if context.get("code_files"):
+            prompt += "待测试代码：\n"
+            for file in context["code_files"]:
+                prompt += f"\n文件: {file.get('path')}\n"
+                prompt += f"```python\n{file.get('content')}\n```\n"
 
         if context.get("design"):
-            prompt += f"设计文档：\n{json.dumps(context['design'], ensure_ascii=False, indent=2)}\n\n"
+            prompt += f"\n设计文档：\n{json.dumps(context['design'], ensure_ascii=False, indent=2)}\n\n"
 
         prompt += "请生成完整的测试用例。"
 

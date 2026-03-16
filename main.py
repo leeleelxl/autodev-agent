@@ -14,6 +14,7 @@ from src.agents import (
     ReviewerAgent
 )
 from src.llm import LLMFactory, LLMProvider
+from src.tools import CodeExecutor, CodeAnalyzer, Linter
 from src.utils import Config
 
 # 加载环境变量
@@ -58,6 +59,19 @@ async def main():
     orchestrator.register_agent(reviewer)
 
     print(f"✓ 注册的 Agents: {list(orchestrator.agents.keys())}")
+
+    # 创建并注册工具
+    code_executor = CodeExecutor(use_docker=False)  # 开发模式使用本地执行
+    code_analyzer = CodeAnalyzer()
+    linter = Linter()
+
+    orchestrator.register_tools(
+        code_executor=code_executor,
+        code_analyzer=code_analyzer,
+        linter=linter
+    )
+
+    print(f"✓ 注册的 Tools: {list(orchestrator.tools.keys())}")
     print()
 
     # 示例任务
@@ -82,8 +96,18 @@ async def main():
     print(f"状态: {'成功' if result['success'] else '失败'}")
     print(f"阶段数: {len(result['phases'])}")
 
+    # 显示各阶段摘要
+    for phase in result['phases']:
+        print(f"\n[{phase['name']}]")
+        if phase['name'] == 'review':
+            # 显示审查结果
+            review_data = result['final_output'].get('review', {})
+            if review_data:
+                print(f"  代码质量分数: {review_data.get('score', 0)}/100")
+                print(f"  问题数量: {len(review_data.get('issues', []))}")
+
     if result.get("error"):
-        print(f"错误: {result['error']}")
+        print(f"\n错误: {result['error']}")
 
 
 if __name__ == "__main__":

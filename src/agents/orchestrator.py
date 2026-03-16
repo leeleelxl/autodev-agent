@@ -38,10 +38,33 @@ class Orchestrator:
         self.tasks: Dict[str, Task] = {}
         self.workflow_history: List[Dict[str, Any]] = []
         self.context: Dict[str, Any] = {}
+        self.tools: Dict[str, Any] = {}
 
     def register_agent(self, agent: BaseAgent):
         """注册 agent"""
         self.agents[agent.config.name] = agent
+
+    def register_tools(self, **tools):
+        """注册工具"""
+        self.tools.update(tools)
+
+        # 为 agents 设置工具
+        if "developer" in self.agents:
+            self.agents["developer"].set_tools(
+                code_analyzer=tools.get("code_analyzer"),
+                linter=tools.get("linter")
+            )
+
+        if "tester" in self.agents:
+            self.agents["tester"].set_tools(
+                code_executor=tools.get("code_executor")
+            )
+
+        if "reviewer" in self.agents:
+            self.agents["reviewer"].set_tools(
+                code_analyzer=tools.get("code_analyzer"),
+                linter=tools.get("linter")
+            )
 
     def create_task(self, task: Task):
         """创建任务"""

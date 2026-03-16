@@ -18,6 +18,13 @@ class DeveloperAgent(BaseAgent):
             role="软件开发者，负责代码实现"
         )
         super().__init__(config)
+        self.code_analyzer = None
+        self.linter = None
+
+    def set_tools(self, code_analyzer=None, linter=None):
+        """设置工具"""
+        self.code_analyzer = code_analyzer
+        self.linter = linter
 
     async def process(self, task: str, context: Optional[Dict[str, Any]] = None) -> AgentResponse:
         """
@@ -41,11 +48,41 @@ class DeveloperAgent(BaseAgent):
         # 解析代码
         code_files = self._parse_code(response_content)
 
+        # 如果有工具，进行代码分析和质量检查
+        analysis_results = []
+        quality_results = []
+
+        for file in code_files:
+            code = file.get("content", "")
+
+            # 代码分析
+            if self.code_analyzer:
+                analysis = await self.code_analyzer.execute(code)
+                if analysis.success:
+                    analysis_results.append({
+                        "file": file.get("path"),
+                        "analysis": analysis.output
+                    })
+
+            # 质量检查
+            if self.linter:
+                quality = await self.linter.execute(code)
+                if quality.success:
+                    quality_results.append({
+                        "file": file.get("path"),
+                        "quality": quality.output
+                    })
+
         # 保存到记忆
         self.add_message(Message(
             role="assistant",
             content=response_content,
-            metadata={"task": task, "phase": "development"}
+            metadata={
+                "task": task,
+                "phase": "development",
+                "analysis": analysis_results,
+                "quality": quality_results
+            }
         ))
 
         return AgentResponse(
@@ -55,7 +92,9 @@ class DeveloperAgent(BaseAgent):
             ],
             metadata={
                 "phase": "development",
-                "files": code_files
+                "files": code_files,
+                "analysis": analysis_results,
+                "quality": quality_results
             }
         )
 
@@ -94,6 +133,9 @@ class DeveloperAgent(BaseAgent):
 
         if context.get("requirements"):
             prompt += f"具体要求：\n{context['requirements']}\n\n"
+
+        if context.get("review_issues"):
+            prompt += f"需要修复的问题：\n{json.dumps(context['review_issues'], ensure_ascii=False, indent=2)}\n\n"
 
         prompt += "请实现代码并输出 JSON 格式的文件列表。"
 
