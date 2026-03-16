@@ -42,11 +42,19 @@ agent_project/
 ## 技术栈
 
 - LangChain/LangGraph - Agent 编排
-- Claude API - 推理引擎
+- 多 LLM 支持 - Claude / Kimi / Qwen（可自由选择）
 - Chroma/Pinecone - 向量数据库
 - Tree-sitter - 代码分析
 - Docker - 执行沙箱
 - Streamlit/Gradio - 演示界面
+
+## 支持的 LLM
+
+✅ **Anthropic Claude** - 推理能力强，代码生成质量高
+✅ **Moonshot Kimi** - 长上下文，中文友好
+✅ **Qwen (通义千问)** - 国产模型，性价比高
+
+详见 [LLM 提供商文档](docs/LLM_PROVIDERS.md)
 
 ## 开发计划
 
