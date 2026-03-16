@@ -27,7 +27,7 @@ type: project
 
 ### 技术栈
 - **框架**: LangChain/LangGraph（agent 编排）
-- **LLM**: Claude API（推理）+ 本地模型（代码生成）
+- **LLM**: 多提供商支持 - Claude / Kimi / Qwen（可自由选择）
 - **向量数据库**: Chroma/Pinecone（长期记忆）
 - **代码分析**: Tree-sitter（AST 解析）
 - **执行环境**: Docker（沙箱）
