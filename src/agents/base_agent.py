@@ -41,6 +41,11 @@ class BaseAgent(ABC):
         self.config = config
         self.memory: List[Message] = []
         self.llm_client = None
+        self.memory_manager = None
+
+    def set_memory_manager(self, memory_manager):
+        """设置记忆管理器"""
+        self.memory_manager = memory_manager
 
     def set_llm_client(self, client):
         """设置 LLM 客户端"""

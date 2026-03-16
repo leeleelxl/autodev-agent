@@ -15,6 +15,7 @@ from src.agents import (
 )
 from src.llm import LLMFactory, LLMProvider
 from src.tools import CodeExecutor, CodeAnalyzer, Linter
+from src.memory import MemoryManager, ExperienceMemory
 from src.utils import Config
 
 # 加载环境变量
@@ -72,6 +73,19 @@ async def main():
     )
 
     print(f"✓ 注册的 Tools: {list(orchestrator.tools.keys())}")
+
+    # 创建并设置记忆系统
+    memory_manager = MemoryManager(persist_dir="./data/chroma")
+    experience_memory = ExperienceMemory(persist_dir="./data/chroma")
+
+    orchestrator.set_memory(memory_manager, experience_memory)
+
+    print(f"✓ 记忆系统已启用")
+
+    # 显示记忆统计
+    stats = memory_manager.get_stats()
+    print(f"  - 短期记忆: {stats['short_term']['count']} 条")
+    print(f"  - 长期记忆: {stats['long_term']['total_memories']} 条")
     print()
 
     # 示例任务

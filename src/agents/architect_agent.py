@@ -32,6 +32,15 @@ class ArchitectAgent(BaseAgent):
         """
         context = context or {}
 
+        # 从记忆中获取相关设计经验
+        if self.memory_manager:
+            memory_context = await self.memory_manager.get_context(
+                query=f"架构设计 {task}",
+                max_tokens=1000
+            )
+            if memory_context:
+                context["memory_context"] = memory_context
+
         # 构建系统提示词
         system_prompt = self._build_system_prompt()
 
@@ -55,6 +64,18 @@ class ArchitectAgent(BaseAgent):
             content=response_content,
             metadata={"task": task, "phase": "architecture"}
         ))
+
+        # 保存到记忆管理器
+        if self.memory_manager:
+            await self.memory_manager.add(
+                content=f"架构设计: {task}\n方案: {response_content}",
+                metadata={
+                    "type": "architecture",
+                    "task": task,
+                    "importance": 0.9
+                },
+                save_to_long_term=True
+            )
 
         return AgentResponse(
             content=response_content,
@@ -109,6 +130,16 @@ class ArchitectAgent(BaseAgent):
     def _build_user_prompt(self, task: str, context: Dict[str, Any]) -> str:
         """构建用户提示词"""
         prompt = f"需求描述：\n{task}\n\n"
+
+        # 添加记忆上下文
+        if context.get("memory_context"):
+            prompt += f"相关历史经验：\n{context['memory_context']}\n\n"
+
+        if context.get("best_practices"):
+            prompt += f"最佳实践：\n"
+            for practice in context["best_practices"]:
+                prompt += f"- {practice}\n"
+            prompt += "\n"
 
         if context.get("constraints"):
             prompt += f"约束条件：\n{context['constraints']}\n\n"

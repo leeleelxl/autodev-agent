@@ -39,6 +39,8 @@ class Orchestrator:
         self.workflow_history: List[Dict[str, Any]] = []
         self.context: Dict[str, Any] = {}
         self.tools: Dict[str, Any] = {}
+        self.memory_manager = None
+        self.experience_memory = None
 
     def register_agent(self, agent: BaseAgent):
         """注册 agent"""
@@ -66,6 +68,15 @@ class Orchestrator:
                 linter=tools.get("linter")
             )
 
+    def set_memory(self, memory_manager, experience_memory=None):
+        """设置记忆系统"""
+        self.memory_manager = memory_manager
+        self.experience_memory = experience_memory
+
+        # 为所有 agents 设置记忆管理器
+        for agent in self.agents.values():
+            agent.set_memory_manager(memory_manager)
+
     def create_task(self, task: Task):
         """创建任务"""
         self.tasks[task.id] = task
@@ -90,8 +101,31 @@ class Orchestrator:
         }
 
         try:
+            # 从记忆中获取相关经验
+            if self.memory_manager:
+                print("检索相关经验...")
+                relevant_memories = await self.memory_manager.search(
+                    initial_task,
+                    use_long_term=True,
+                    top_k=5
+                )
+                if relevant_memories:
+                    memory_context = "\n".join([m.content for m in relevant_memories])
+                    self.context["memory_context"] = memory_context
+                    print(f"✓ 找到 {len(relevant_memories)} 条相关记忆")
+
+            # 获取最佳实践
+            if self.experience_memory:
+                best_practices = await self.experience_memory.get_best_practices(
+                    "software_development",
+                    top_k=3
+                )
+                if best_practices:
+                    self.context["best_practices"] = best_practices
+                    print(f"✓ 加载 {len(best_practices)} 条最佳实践")
+
             # Phase 1: 架构设计
-            print("Phase 1: 架构设计...")
+            print("\nPhase 1: 架构设计...")
             architect = self.agents.get("architect")
             if not architect:
                 raise ValueError("Architect agent 未注册")
@@ -102,6 +136,18 @@ class Orchestrator:
                 "name": "architecture",
                 "result": design_response.content
             })
+
+            # 保存设计到记忆
+            if self.memory_manager:
+                await self.memory_manager.add(
+                    content=f"任务: {initial_task}\n设计: {design_response.content}",
+                    metadata={
+                        "type": "design",
+                        "task": initial_task,
+                        "importance": 0.8
+                    },
+                    save_to_long_term=True
+                )
 
             # Phase 2: 代码实现
             print("Phase 2: 代码实现...")
@@ -130,6 +176,7 @@ class Orchestrator:
                 self.context
             )
             self.context["test_files"] = test_response.metadata.get("test_cases", [])
+            self.context["test_results"] = test_response.metadata.get("test_results", [])
             workflow_result["phases"].append({
                 "name": "testing",
                 "result": test_response.content
@@ -151,6 +198,40 @@ class Orchestrator:
                 "result": review_response.content
             })
 
+            # 记录经验
+            if self.experience_memory:
+                score = review_result.get("score", 0) / 100.0
+                test_success = all(
+                    t.get("success", False)
+                    for t in self.context.get("test_results", [])
+                )
+
+                if score >= 0.7 and test_success:
+                    # 记录成功案例
+                    await self.experience_memory.record_success(
+                        task=initial_task,
+                        solution=dev_response.content,
+                        metadata={
+                            "score": score,
+                            "test_passed": test_success,
+                            "design": self.context.get("design")
+                        }
+                    )
+                    print("✓ 记录成功经验")
+                else:
+                    # 记录失败案例
+                    issues = review_result.get("issues", [])
+                    await self.experience_memory.record_failure(
+                        task=initial_task,
+                        error=f"质量分数: {score}, 测试通过: {test_success}",
+                        attempted_solution=dev_response.content,
+                        metadata={
+                            "score": score,
+                            "issues": issues
+                        }
+                    )
+                    print("✓ 记录失败经验")
+
             # Phase 5: 迭代改进（如果需要）
             if review_result.get("score", 100) < 80:
                 print("Phase 5: 迭代改进...")
@@ -169,17 +250,32 @@ class Orchestrator:
                         "result": improved_response.content
                     })
 
+            # 整合记忆
+            if self.memory_manager:
+                await self.memory_manager.consolidate()
+                print("✓ 整合记忆完成")
+
             workflow_result["success"] = True
             workflow_result["final_output"] = {
                 "design": self.context.get("design"),
                 "code_files": self.context.get("code_files"),
                 "test_files": self.context.get("test_files"),
+                "test_results": self.context.get("test_results"),
                 "review": review_result
             }
 
         except Exception as e:
             workflow_result["error"] = str(e)
             print(f"工作流执行失败: {e}")
+
+            # 记录失败
+            if self.experience_memory:
+                await self.experience_memory.record_failure(
+                    task=initial_task,
+                    error=str(e),
+                    attempted_solution="工作流执行失败",
+                    metadata={"phase": "workflow"}
+                )
 
         return workflow_result
 
