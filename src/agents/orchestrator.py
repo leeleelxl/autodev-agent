@@ -139,12 +139,16 @@ class Orchestrator:
 
             # 保存设计到记忆
             if self.memory_manager:
+                import json
+                # 将复杂对象转换为 JSON 字符串（ChromaDB 限制）
+                design_str = json.dumps(self.context.get("design"), ensure_ascii=False)
                 await self.memory_manager.add(
                     content=f"任务: {initial_task}\n设计: {design_response.content}",
                     metadata={
                         "type": "design",
                         "task": initial_task,
-                        "importance": 0.8
+                        "importance": 0.8,
+                        "design_summary": design_str[:500]  # 只保存摘要
                     },
                     save_to_long_term=True
                 )
@@ -200,35 +204,35 @@ class Orchestrator:
 
             # 记录经验
             if self.experience_memory:
+                import json
                 score = review_result.get("score", 0) / 100.0
                 test_success = all(
                     t.get("success", False)
                     for t in self.context.get("test_results", [])
                 )
 
+                # 简化 metadata（ChromaDB 限制）
+                simple_metadata = {
+                    "score": score,
+                    "test_passed": test_success,
+                    "num_issues": len(review_result.get("issues", []))
+                }
+
                 if score >= 0.7 and test_success:
                     # 记录成功案例
                     await self.experience_memory.record_success(
                         task=initial_task,
-                        solution=dev_response.content,
-                        metadata={
-                            "score": score,
-                            "test_passed": test_success,
-                            "design": self.context.get("design")
-                        }
+                        solution=dev_response.content[:1000],  # 限制长度
+                        metadata=simple_metadata
                     )
                     print("✓ 记录成功经验")
                 else:
                     # 记录失败案例
-                    issues = review_result.get("issues", [])
                     await self.experience_memory.record_failure(
                         task=initial_task,
                         error=f"质量分数: {score}, 测试通过: {test_success}",
-                        attempted_solution=dev_response.content,
-                        metadata={
-                            "score": score,
-                            "issues": issues
-                        }
+                        attempted_solution=dev_response.content[:1000],
+                        metadata=simple_metadata
                     )
                     print("✓ 记录失败经验")
 
