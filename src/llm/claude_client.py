@@ -13,7 +13,10 @@ class ClaudeClient(BaseLLMClient):
 
     def __init__(self, api_key: str, model: str = "claude-3-5-sonnet-20241022"):
         super().__init__(api_key, model)
-        self.client = AsyncAnthropic(api_key=api_key)
+        self.client = AsyncAnthropic(
+            api_key=api_key,
+            timeout=120.0  # 增加超时时间到 120 秒
+        )
 
     async def chat(
         self,

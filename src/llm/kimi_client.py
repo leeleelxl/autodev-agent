@@ -15,7 +15,8 @@ class KimiClient(BaseLLMClient):
         super().__init__(api_key, model)
         self.client = AsyncOpenAI(
             api_key=api_key,
-            base_url="https://api.moonshot.cn/v1"
+            base_url="https://api.moonshot.cn/v1",
+            timeout=120.0  # 增加超时时间到 120 秒
         )
 
     async def chat(

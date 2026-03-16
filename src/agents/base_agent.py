@@ -70,13 +70,29 @@ class BaseAgent(ABC):
 
         llm_messages = [LLMMessage(role=m["role"], content=m["content"]) for m in messages]
 
-        response = await self.llm_client.chat(
-            messages=llm_messages,
-            temperature=kwargs.get("temperature", self.config.temperature),
-            max_tokens=kwargs.get("max_tokens", self.config.max_tokens)
-        )
+        # 添加重试机制
+        max_retries = 3
+        retry_delay = 5
 
-        return response.content
+        for attempt in range(max_retries):
+            try:
+                response = await self.llm_client.chat(
+                    messages=llm_messages,
+                    temperature=kwargs.get("temperature", self.config.temperature),
+                    max_tokens=kwargs.get("max_tokens", self.config.max_tokens)
+                )
+                return response.content
+
+            except Exception as e:
+                error_msg = str(e)
+                print(f"  ⚠ LLM 调用失败 (尝试 {attempt + 1}/{max_retries}): {error_msg}")
+
+                if attempt < max_retries - 1:
+                    print(f"  等待 {retry_delay} 秒后重试...")
+                    import asyncio
+                    await asyncio.sleep(retry_delay)
+                else:
+                    raise Exception(f"LLM 调用失败，已重试 {max_retries} 次: {error_msg}")
 
     @abstractmethod
     async def process(self, task: str, context: Optional[Dict[str, Any]] = None) -> AgentResponse:
