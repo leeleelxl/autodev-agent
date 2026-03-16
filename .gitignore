@@ -25,6 +25,7 @@ Thumbs.db
 .cache/
 outputs/
 experiments/
+data/
 
 # Jupyter
 .ipynb_checkpoints/
