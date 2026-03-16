@@ -13,6 +13,7 @@ class AgentConfig(BaseModel):
     """Agent 配置"""
     name: str
     role: str
+    provider: str = "anthropic"  # anthropic, moonshot, qwen
     model: str = "claude-3-5-sonnet-20241022"
     temperature: float = 0.7
     max_tokens: int = 4096

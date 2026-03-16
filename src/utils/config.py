@@ -20,9 +20,12 @@ class Config:
 
     # API Keys
     ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+    MOONSHOT_API_KEY = os.getenv("MOONSHOT_API_KEY", "")
+    DASHSCOPE_API_KEY = os.getenv("DASHSCOPE_API_KEY", "")
 
     # Model
     DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "claude-3-5-sonnet-20241022")
+    DEFAULT_PROVIDER = os.getenv("DEFAULT_PROVIDER", "anthropic")
 
     # Vector Database
     CHROMA_PERSIST_DIR = os.getenv("CHROMA_PERSIST_DIR", str(DATA_DIR / "chroma"))
