@@ -113,21 +113,26 @@ class DeveloperAgent(BaseAgent):
 - 必须生成所有必要的文件（主文件、模型、工具类、配置等）
 - 确保所有 import 的模块都有对应的文件
 - 代码必须可以直接运行，不能有缺失的依赖
-- 如果使用了外部库，在文件开头注释说明
 
-请以 JSON 格式输出代码文件，格式如下：
-{
-    "files": [
-        {
-            "path": "文件路径",
-            "content": "完整的文件内容（包含所有必要的 import 和实现）",
-            "description": "文件说明"
-        }
-    ],
-    "reasoning": "实现思路和关键决策"
-}
+**输出格式：使用 Markdown 代码块**
 
-示例：如果主文件 import 了 models.User，则必须同时生成 models.py 文件。"""
+对于每个文件，使用以下格式：
+
+```python
+# filename: app.py
+# description: 主应用文件
+
+代码内容...
+```
+
+```python
+# filename: models.py
+# description: 数据模型
+
+代码内容...
+```
+
+**不要使用 JSON 格式！直接输出 Markdown 代码块即可。**"""
 
     def _build_user_prompt(self, task: str, context: Dict[str, Any]) -> str:
         """构建用户提示词"""
@@ -150,23 +155,53 @@ class DeveloperAgent(BaseAgent):
         return prompt
 
     def _parse_code(self, response: str) -> List[Dict[str, str]]:
-        """解析代码文件"""
-        try:
-            start = response.find("{")
-            end = response.rfind("}") + 1
-            if start != -1 and end > start:
-                json_str = response[start:end]
-                data = json.loads(json_str)
-                files = data.get("files", [])
+        """解析代码文件 - 使用 Markdown 代码块而不是 JSON"""
+        import re
 
-                # 验证完整性：检查 import 依赖
-                self._validate_completeness(files)
+        files = []
 
-                return files
-        except Exception as e:
-            print(f"解析代码失败: {e}")
+        # 提取所有 Python 代码块
+        pattern = r'```python\s*\n(.*?)\n```'
+        code_blocks = re.findall(pattern, response, re.DOTALL)
 
-        return []
+        for code_block in code_blocks:
+            # 从代码块中提取文件名和描述
+            filename = None
+            description = ""
+            code_lines = []
+
+            for line in code_block.split('\n'):
+                if line.strip().startswith('# filename:'):
+                    filename = line.split(':', 1)[1].strip()
+                elif line.strip().startswith('# description:'):
+                    description = line.split(':', 1)[1].strip()
+                else:
+                    code_lines.append(line)
+
+            # 如果没有指定文件名，尝试从第一行注释提取
+            if not filename and code_lines:
+                first_line = code_lines[0].strip()
+                if first_line.startswith('#') and '.py' in first_line:
+                    filename = first_line.replace('#', '').strip()
+
+            # 如果还是没有文件名，使用默认名
+            if not filename:
+                filename = f"file_{len(files) + 1}.py"
+
+            code_content = '\n'.join(code_lines)
+
+            if code_content.strip():
+                files.append({
+                    "path": filename,
+                    "content": code_content,
+                    "description": description
+                })
+
+        # 验证完整性
+        if files:
+            self._validate_completeness(files)
+
+        return files
 
     def _validate_completeness(self, files: List[Dict[str, str]]):
         """验证代码完整性"""

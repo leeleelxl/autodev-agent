@@ -11,7 +11,7 @@ from .base_client import BaseLLMClient, LLMMessage, LLMResponse, LLMProvider
 class KimiClient(BaseLLMClient):
     """Kimi API 客户端 (使用 OpenAI 兼容接口)"""
 
-    def __init__(self, api_key: str, model: str = "moonshot-v1-8k"):
+    def __init__(self, api_key: str, model: str = "kimi-k2-turbo-preview"):
         super().__init__(api_key, model)
         self.client = AsyncOpenAI(
             api_key=api_key,

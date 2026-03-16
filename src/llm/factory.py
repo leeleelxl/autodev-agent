@@ -15,7 +15,7 @@ class LLMFactory:
     # 默认模型配置
     DEFAULT_MODELS = {
         LLMProvider.ANTHROPIC: "claude-3-5-sonnet-20241022",
-        LLMProvider.MOONSHOT: "moonshot-v1-8k",
+        LLMProvider.MOONSHOT: "kimi-k2-turbo-preview",
         LLMProvider.QWEN: "qwen-max",
     }
 
