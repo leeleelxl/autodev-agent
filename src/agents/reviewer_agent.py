@@ -76,19 +76,25 @@ class ReviewerAgent(BaseAgent):
         return """你是一位资深代码审查专家，擅长发现代码问题并提供改进建议。
 
 审查维度：
-1. 代码质量 - 可读性、可维护性、复杂度
-2. 最佳实践 - 设计模式、编码规范
-3. 性能 - 算法效率、资源使用
-4. 安全性 - 潜在漏洞、输入验证
-5. 测试 - 测试覆盖率、测试质量
+1. **完整性** - 所有 import 的模块是否都存在？代码能否直接运行？
+2. 代码质量 - 可读性、可维护性、复杂度
+3. 最佳实践 - 设计模式、编码规范
+4. 性能 - 算法效率、资源使用
+5. 安全性 - 潜在漏洞、输入验证
+6. 测试 - 测试覆盖率、测试质量
+
+**重要：首先检查代码完整性**
+- 检查所有 import 语句
+- 确认所有依赖模块都已提供
+- 如果缺少文件，必须标记为 HIGH 严重性问题
 
 请以 JSON 格式输出审查结果：
 {
-    "score": 85,  // 总分 0-100
+    "score": 85,  // 总分 0-100（缺少依赖文件扣 30 分）
     "issues": [
         {
             "severity": "high/medium/low",
-            "category": "质量/性能/安全/测试",
+            "category": "完整性/质量/性能/安全/测试",
             "location": "文件:行号",
             "description": "问题描述",
             "suggestion": "改进建议"
@@ -103,10 +109,20 @@ class ReviewerAgent(BaseAgent):
         """使用工具进行自动分析"""
         tool_results = {
             "analysis": [],
-            "quality": []
+            "quality": [],
+            "completeness": []
         }
 
         code_files = context.get("code_files", [])
+
+        # 检查完整性
+        missing_deps = self._check_completeness(code_files)
+        if missing_deps:
+            tool_results["completeness"].append({
+                "issue": "缺少依赖文件",
+                "missing": list(missing_deps),
+                "severity": "high"
+            })
 
         for file in code_files:
             code = file.get("content", "")

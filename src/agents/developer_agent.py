@@ -109,17 +109,25 @@ class DeveloperAgent(BaseAgent):
 4. 添加必要的注释和文档字符串
 5. 考虑边界情况和错误处理
 
+**重要：生成完整可运行的项目**
+- 必须生成所有必要的文件（主文件、模型、工具类、配置等）
+- 确保所有 import 的模块都有对应的文件
+- 代码必须可以直接运行，不能有缺失的依赖
+- 如果使用了外部库，在文件开头注释说明
+
 请以 JSON 格式输出代码文件，格式如下：
 {
     "files": [
         {
             "path": "文件路径",
-            "content": "文件内容",
+            "content": "完整的文件内容（包含所有必要的 import 和实现）",
             "description": "文件说明"
         }
     ],
     "reasoning": "实现思路和关键决策"
-}"""
+}
+
+示例：如果主文件 import 了 models.User，则必须同时生成 models.py 文件。"""
 
     def _build_user_prompt(self, task: str, context: Dict[str, Any]) -> str:
         """构建用户提示词"""
@@ -149,8 +157,47 @@ class DeveloperAgent(BaseAgent):
             if start != -1 and end > start:
                 json_str = response[start:end]
                 data = json.loads(json_str)
-                return data.get("files", [])
+                files = data.get("files", [])
+
+                # 验证完整性：检查 import 依赖
+                self._validate_completeness(files)
+
+                return files
         except Exception as e:
             print(f"解析代码失败: {e}")
 
         return []
+
+    def _validate_completeness(self, files: List[Dict[str, str]]):
+        """验证代码完整性"""
+        import re
+
+        # 收集所有文件路径（不含扩展名）
+        available_modules = set()
+        for file in files:
+            path = file.get("path", "")
+            if path.endswith(".py"):
+                module_name = path.replace(".py", "").replace("/", ".")
+                available_modules.add(module_name)
+
+        # 检查每个文件的 import
+        missing_modules = set()
+        for file in files:
+            content = file.get("content", "")
+
+            # 提取 from xxx import 和 import xxx
+            imports = re.findall(r'(?:from|import)\s+([a-zA-Z_][a-zA-Z0-9_]*)', content)
+
+            for imp in imports:
+                # 跳过标准库和第三方库
+                if imp in ['os', 'sys', 're', 'json', 'time', 'datetime', 'typing',
+                          'flask', 'sqlite3', 'jwt', 'hashlib', 'werkzeug', 'marshmallow']:
+                    continue
+
+                # 检查是否在生成的文件中
+                if imp not in available_modules and imp not in [m.split('.')[0] for m in available_modules]:
+                    missing_modules.add(imp)
+
+        if missing_modules:
+            print(f"⚠️  警告：缺少依赖模块: {', '.join(missing_modules)}")
+            print(f"   已生成的模块: {', '.join(available_modules)}")
