@@ -1,65 +1,65 @@
-# test_app.py
 import unittest
-from app import app
-from models import db, User
-from testfixtures import TempDirectory
-from flask_testing import TestCase
-from flask import json
+from app import app, db
+from models import User
+from token_service import TokenService
+import json
 
-class FlaskTestCase(TestCase):
-    def create_app(self):
-        return app
-
+class TestApp(unittest.TestCase):
     def setUp(self):
-        self.db_fd, db.Model.metadata.create_all(db.engine)
+        app.config['TESTING'] = True
+        app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///:memory:'
+        db.init_app(app)
+        with app.app_context():
+            db.create_all()
 
     def tearDown(self):
-        db.Model.metadata.drop_all(db.engine)
+        with app.app_context():
+            db.session.remove()
+            db.drop_all()
 
     def test_user_registration(self):
-        with self.client:
-            response = self.client.post('/register', data=json.dumps({'email': 'test@example.com', 'password': 'password'}), content_type='application/json')
+        with app.test_client() as client:
+            response = client.post('/register', json={'username': 'testuser', 'password': 'testpass'})
             self.assertEqual(response.status_code, 201)
-            self.assertTrue(User.query.filter_by(email='test@example.com').first())
+            self.assertTrue('message' in response.json)
 
-    def test_user_registration_duplicate_email(self):
-        with self.client:
-            self.client.post('/register', data=json.dumps({'email': 'test@example.com', 'password': 'password'}), content_type='application/json')
-            response = self.client.post('/register', data=json.dumps({'email': 'test@example.com', 'password': 'password'}), content_type='application/json')
-            self.assertEqual(response.status_code, 409)
+    def test_user_registration_missing_data(self):
+        with app.test_client() as client:
+            response = client.post('/register', json={})
+            self.assertEqual(response.status_code, 400)
+            self.assertTrue('message' in response.json)
 
     def test_user_login(self):
-        with self.client:
-            self.client.post('/register', data=json.dumps({'email': 'test@example.com', 'password': 'password'}), content_type='application/json')
-            response = self.client.post('/login', data=json.dumps({'email': 'test@example.com', 'password': 'password'}), content_type='application/json')
+        with app.test_client() as client:
+            client.post('/register', json={'username': 'testuser', 'password': 'testpass'})
+            response = client.post('/login', json={'username': 'testuser', 'password': 'testpass'})
             self.assertEqual(response.status_code, 200)
-            self.assertIn('access_token', response.json)
+            self.assertTrue('token' in response.json)
 
-    def test_user_login_invalid_credentials(self):
-        with self.client:
-            response = self.client.post('/login', data=json.dumps({'email': 'test@example.com', 'password': 'wrongpassword'}), content_type='application/json')
+    def test_user_login_incorrect_password(self):
+        with app.test_client() as client:
+            client.post('/register', json={'username': 'testuser', 'password': 'testpass'})
+            response = client.post('/login', json={'username': 'testuser', 'password': 'wrongpass'})
             self.assertEqual(response.status_code, 401)
 
+    def test_token_validation(self):
+        with app.test_client() as client:
+            client.post('/register', json={'username': 'testuser', 'password': 'testpass'})
+            response = client.post('/login', json={'username': 'testuser', 'password': 'testpass'})
+            token = response.json['token']
+            response = client.get('/register', headers={'Authorization': token})
+            self.assertEqual(response.status_code, 403)
+
+    def test_token_validation_invalid_token(self):
+        with app.test_client() as client:
+            response = client.get('/register', headers={'Authorization': 'invalid_token'})
+            self.assertEqual(response.status_code, 403)
+
     def test_error_handling(self):
-        with self.client:
-            response = self.client.get('/nonexistent')
-            self.assertEqual(response.status_code, 404)
-            self.assertIn('error', response.json)
+        with app.test_client() as client:
+            response = client.post('/register', json={'username': 'testuser'})
+            self.assertEqual(response.status_code, 400)
+            self.assertTrue('message' in response.json)
 
-class TokenTestCase(unittest.TestCase):
-    def test_generate_token(self):
-        from token_service import generate_token
-        token = generate_token(1)
-        self.assertIsNotNone(token)
-
-    def test_verify_token(self):
-        from token_service import generate_token, verify_token
-        token = generate_token(1)
-        payload = verify_token(token)
-        self.assertIsNotNone(payload)
-        self.assertEqual(payload, 1)
-
-    def test_verify_token_invalid(self):
-        from token_service import verify_token
-        payload = verify_token('invalidtoken')
-        self.assertIsNone(payload)
+if __name__ == '__main__':
+    unittest.main()

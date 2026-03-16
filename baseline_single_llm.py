@@ -1,102 +1,108 @@
 ```python
 import sqlite3
-import jwt
-import hashlib
 import os
-from getpass import getpass
-from datetime import datetime, timedelta
+import jwt
+from flask import Flask, request, jsonify
+from werkzeug.security import generate_password_hash, check_password_hash
 
-# Configuration
-SECRET_KEY = 'your_secret_key'
-ALGORITHM = 'HS256'
-EXPIRE_MINUTES = 30  # Token validity period
-DB_PATH = 'users.db'
+app = Flask(__name__)
 
-# Connect to SQLite database
-conn = sqlite3.connect(DB_PATH)
+# Configurations
+SECRET_KEY = os.urandom(32)  # You should store this securely
+ALGORITHM = "HS256"
+DATABASE = "sqlite:///./auth.db"
+
+# Create the database if it does not exist
+conn = sqlite3.connect(DATABASE)
 c = conn.cursor()
-
-# Create table for users
-c.execute('''CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, username TEXT UNIQUE, password_hash TEXT)''')
+c.execute('''
+CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL
+)
+''')
 conn.commit()
+conn.close()
 
-def hash_password(password):
-    return hashlib.sha256(password.encode()).hexdigest()
-
-def register(username, password):
+@app.route('/register', methods=['POST'])
+def register():
+    data = request.json
+    username = data.get('username')
+    password = data.get('password')
     if not username or not password:
-        raise ValueError("Username and password cannot be empty")
-    c.execute("SELECT * FROM users WHERE username = ?", (username,))
-    if c.fetchone() is not None:
-        raise ValueError("Username already exists")
-    password_hash = hash_password(password)
-    c.execute("INSERT INTO users (username, password_hash) VALUES (?, ?)", (username, password_hash))
-    conn.commit()
-    return True
+        return jsonify({'error': 'Missing data'}), 400
 
-def login(username, password):
-    c.execute("SELECT * FROM users WHERE username = ?", (username,))
+    try:
+        password_hash = generate_password_hash(password)
+    except Exception as e:
+        return jsonify({'error': 'Error hashing password'}), 500
+
+    conn = sqlite3.connect(DATABASE)
+    c = conn.cursor()
+    try:
+        c.execute('INSERT INTO users (username, password_hash) VALUES (?, ?)', (username, password_hash))
+        conn.commit()
+    except sqlite3.IntegrityError:
+        return jsonify({'error': 'Username already exists'}), 409
+    except Exception as e:
+        return jsonify({'error': 'Error registering user'}), 500
+    finally:
+        conn.close()
+
+    return jsonify({'message': 'User registered successfully'}), 201
+
+@app.route('/login', methods=['POST'])
+def login():
+    data = request.json
+    username = data.get('username')
+    password = data.get('password')
+    if not username or not password:
+        return jsonify({'error': 'Missing data'}), 400
+
+    conn = sqlite3.connect(DATABASE)
+    c = conn.cursor()
+    c.execute('SELECT password_hash FROM users WHERE username = ?', (username,))
     user = c.fetchone()
+    conn.close()
+
     if not user:
-        raise ValueError("Username not found")
-    if hash_password(password) != user[1]:
-        raise ValueError("Incorrect password")
-    return create_token(username)
+        return jsonify({'error': 'Invalid credentials'}), 401
 
-def create_token(username):
-    payload = {
-        'exp': datetime.utcnow() + timedelta(minutes=EXPIRE_MINUTES),
-        'iat': datetime.utcnow(),
-        'sub': username
-    }
-    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+    try:
+        if not check_password_hash(user[0], password):
+            return jsonify({'error': 'Invalid credentials'}), 401
+    except Exception as e:
+        return jsonify({'error': 'Error checking password'}), 500
 
-def verify_token(token):
+    try:
+        payload = {'username': username}
+        token = jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+    except Exception as e:
+        return jsonify({'error': 'Error generating token'}), 500
+
+    return jsonify({'token': token})
+
+@app.route('/verify', methods=['POST'])
+def verify():
+    token = request.json.get('token')
+    if not token:
+        return jsonify({'error': 'Token is missing'}), 400
+
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        c.execute("SELECT * FROM users WHERE username = ?", (payload['sub'],))
-        if c.fetchone():
-            return True
+        username = payload.get('username')
+        if not username:
+            return jsonify({'error': 'Invalid token'}), 401
     except jwt.ExpiredSignatureError:
-        raise ValueError("Token expired")
+        return jsonify({'error': 'Token expired'}), 401
     except jwt.InvalidTokenError:
-        raise ValueError("Invalid token")
-    return False
+        return jsonify({'error': 'Invalid token'}), 401
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
-def main():
-    while True:
-        print("\n1. Register")
-        print("2. Login")
-        print("3. Verify Token")
-        print("4. Exit")
-        choice = input("Enter choice: ")
-        if choice == '1':
-            username = input("Enter username: ")
-            password = getpass("Enter password: ")
-            try:
-                register(username, password)
-                print("Registration successful")
-            except ValueError as e:
-                print(e)
-        elif choice == '2':
-            username = input("Enter username: ")
-            password = getpass("Enter password: ")
-            try:
-                token = login(username, password)
-                print("Login successful. Token:", token)
-            except ValueError as e:
-                print(e)
-        elif choice == '3':
-            token = input("Enter token to verify: ")
-            if verify_token(token):
-                print("Token verified successfully")
-            else:
-                print("Token verification failed")
-        elif choice == '4':
-            break
-        else:
-            print("Invalid choice")
+    return jsonify({'message': 'Token is valid'}), 200
 
-if __name__ == "__main__":
-    main()
+if __name__ == '__main__':
+    app.run(debug=True)
 ```
