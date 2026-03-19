@@ -1,24 +1,21 @@
 """
 Agents 模块
 
-导出所有 agent 类
+基于 LangChain ReAct + LangGraph 的多 Agent 系统
 """
 
-from .base_agent import BaseAgent, AgentConfig, AgentResponse, Message
-from .orchestrator import Orchestrator, Task, TaskStatus
+from .base_agent import BaseReActAgent, AgentConfig, AgentResponse
+from .orchestrator import Orchestrator
 from .architect_agent import ArchitectAgent
 from .developer_agent import DeveloperAgent
 from .tester_agent import TesterAgent
 from .reviewer_agent import ReviewerAgent
 
 __all__ = [
-    "BaseAgent",
+    "BaseReActAgent",
     "AgentConfig",
     "AgentResponse",
-    "Message",
     "Orchestrator",
-    "Task",
-    "TaskStatus",
     "ArchitectAgent",
     "DeveloperAgent",
     "TesterAgent",

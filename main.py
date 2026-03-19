@@ -1,5 +1,11 @@
 """
 AutoDev 主入口
+
+技术栈：
+- LangChain: LLM 抽象层 + Tool Calling / Function Calling
+- LangGraph: StateGraph 状态机驱动工作流
+- ReAct: Thought → Action → Observation 循环
+- Chain-of-Thought: 结构化推理
 """
 
 import asyncio
@@ -11,12 +17,11 @@ from src.agents import (
     ArchitectAgent,
     DeveloperAgent,
     TesterAgent,
-    ReviewerAgent
+    ReviewerAgent,
 )
-from src.llm import LLMFactory, LLMProvider
-from src.tools import CodeExecutor, CodeAnalyzer, Linter
+from src.llm import create_langchain_llm
+from src.tools import ARCHITECT_TOOLS, DEVELOPER_TOOLS, TESTER_TOOLS, REVIEWER_TOOLS
 from src.memory import MemoryManager, ExperienceMemory
-from src.utils import Config
 
 # 加载环境变量
 load_dotenv()
@@ -25,68 +30,66 @@ load_dotenv()
 async def main():
     """主函数"""
     print("=" * 60)
-    print("AutoDev - 自主软件开发 Agent 系统")
+    print("  AutoDev - 多 Agent 协作代码生成系统")
+    print("  LangChain + LangGraph + ReAct + CoT")
     print("=" * 60)
 
-    # 初始化 orchestrator
-    orchestrator = Orchestrator()
+    # 读取配置
+    provider = os.getenv("DEFAULT_PROVIDER", "moonshot")
+    api_key = os.getenv("MOONSHOT_API_KEY", "")
+    model = os.getenv("DEFAULT_MODEL", "kimi-k2-turbo-preview")
 
-    # 创建 agents
+    if not api_key:
+        print("  ✗ 未配置 API Key，请设置 .env 文件")
+        return
+
+    # 创建 LangChain LLM（统一接口，支持 Tool Calling）
+    llm = create_langchain_llm(
+        provider=provider,
+        api_key=api_key,
+        model=model,
+        temperature=0.7,
+        timeout=120,
+    )
+    print(f"  ✓ LLM: {model} ({provider})")
+
+    # 创建 Agents（ReAct 模式）
     architect = ArchitectAgent()
     developer = DeveloperAgent()
     tester = TesterAgent()
     reviewer = ReviewerAgent()
 
-    # 设置 LLM 客户端（可以为不同 agent 配置不同的 LLM）
-    # 这里演示使用 Claude
-    if Config.ANTHROPIC_API_KEY:
-        claude_client = LLMFactory.create_client(
-            provider=LLMProvider.ANTHROPIC,
-            api_key=Config.ANTHROPIC_API_KEY
-        )
-        architect.set_llm_client(claude_client)
-        developer.set_llm_client(claude_client)
-        tester.set_llm_client(claude_client)
-        reviewer.set_llm_client(claude_client)
-        print("✓ 使用 Claude API")
-    else:
-        print("⚠ 未配置 API Key，请设置 .env 文件")
-        return
+    # 为每个 Agent 设置 LLM 和专属工具（Function Calling）
+    architect.set_llm(llm)
+    architect.set_tools(ARCHITECT_TOOLS)
 
-    # 注册所有 agents
+    developer.set_llm(llm)
+    developer.set_tools(DEVELOPER_TOOLS)
+
+    tester.set_llm(llm)
+    tester.set_tools(TESTER_TOOLS)
+
+    reviewer.set_llm(llm)
+    reviewer.set_tools(REVIEWER_TOOLS)
+
+    print(f"  ✓ Agents: architect, developer, tester, reviewer")
+    print(f"  ✓ Tools: execute_code, analyze_code, lint_code, search_experience")
+
+    # 创建 Orchestrator（LangGraph 状态机）
+    orchestrator = Orchestrator()
     orchestrator.register_agent(architect)
     orchestrator.register_agent(developer)
     orchestrator.register_agent(tester)
     orchestrator.register_agent(reviewer)
 
-    print(f"✓ 注册的 Agents: {list(orchestrator.agents.keys())}")
-
-    # 创建并注册工具
-    code_executor = CodeExecutor(use_docker=False)  # 开发模式使用本地执行
-    code_analyzer = CodeAnalyzer()
-    linter = Linter()
-
-    orchestrator.register_tools(
-        code_executor=code_executor,
-        code_analyzer=code_analyzer,
-        linter=linter
-    )
-
-    print(f"✓ 注册的 Tools: {list(orchestrator.tools.keys())}")
-
-    # 创建并设置记忆系统
+    # 设置记忆系统
     memory_manager = MemoryManager(persist_dir="./data/chroma")
     experience_memory = ExperienceMemory(persist_dir="./data/chroma")
-
     orchestrator.set_memory(memory_manager, experience_memory)
 
-    print(f"✓ 记忆系统已启用")
-
-    # 显示记忆统计
     stats = memory_manager.get_stats()
-    print(f"  - 短期记忆: {stats['short_term']['count']} 条")
-    print(f"  - 长期记忆: {stats['long_term']['total_memories']} 条")
-    print()
+    print(f"  ✓ Memory: 短期 {stats['short_term']['count']} 条, "
+          f"长期 {stats['long_term']['total_memories']} 条")
 
     # 示例任务
     task = """
@@ -96,32 +99,28 @@ async def main():
     - 包含命令行界面
     """
 
-    print("开始执行工作流...")
-    print(f"任务: {task.strip()}")
-    print()
+    print(f"\n  任务: {task.strip()}")
 
-    # 执行工作流
+    # 执行 LangGraph 工作流
     result = await orchestrator.execute_workflow(task)
 
-    print()
-    print("=" * 60)
-    print("工作流执行完成")
-    print("=" * 60)
-    print(f"状态: {'成功' if result['success'] else '失败'}")
-    print(f"阶段数: {len(result['phases'])}")
+    # 输出结果
+    print("\n" + "=" * 60)
+    print(f"  状态: {'成功' if result['success'] else '失败'}")
+    print(f"  迭代次数: {result.get('iterations', 0)}")
+    print(f"  最终分数: {result.get('final_score', 0)}/100")
 
-    # 显示各阶段摘要
-    for phase in result['phases']:
-        print(f"\n[{phase['name']}]")
-        if phase['name'] == 'review':
-            # 显示审查结果
-            review_data = result['final_output'].get('review', {})
-            if review_data:
-                print(f"  代码质量分数: {review_data.get('score', 0)}/100")
-                print(f"  问题数量: {len(review_data.get('issues', []))}")
+    if result.get("phases"):
+        print(f"  阶段数: {len(result['phases'])}")
+        for phase in result["phases"]:
+            tools = phase.get("tools_used", [])
+            tools_str = f" (工具: {', '.join(t['tool'] for t in tools)})" if tools else ""
+            print(f"    - {phase['name']}{tools_str}")
 
     if result.get("error"):
-        print(f"\n错误: {result['error']}")
+        print(f"  错误: {result['error']}")
+
+    print("=" * 60)
 
 
 if __name__ == "__main__":

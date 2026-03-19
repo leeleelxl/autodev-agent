@@ -1,16 +1,18 @@
 """
 Reviewer Agent - 代码审查员
 
-负责代码审查和优化建议
+基于 ReAct + CoT 模式，负责代码审查和优化建议。
+可通过 Tool Calling 自主调用代码分析器和 Linter 进行自动化检查。
 """
 
 from typing import Dict, Any, Optional, List
 import json
-from .base_agent import BaseAgent, AgentConfig, AgentResponse, Message
+import re
+from .base_agent import BaseReActAgent, AgentConfig, AgentResponse
 
 
-class ReviewerAgent(BaseAgent):
-    """代码审查员 Agent"""
+class ReviewerAgent(BaseReActAgent):
+    """代码审查员 Agent - ReAct 模式"""
 
     def __init__(self):
         config = AgentConfig(
@@ -18,61 +20,8 @@ class ReviewerAgent(BaseAgent):
             role="代码审查员，负责代码质量检查和优化建议"
         )
         super().__init__(config)
-        self.code_analyzer = None
-        self.linter = None
-
-    def set_tools(self, code_analyzer=None, linter=None):
-        """设置工具"""
-        self.code_analyzer = code_analyzer
-        self.linter = linter
-
-    async def process(self, task: str, context: Optional[Dict[str, Any]] = None) -> AgentResponse:
-        """
-        处理代码审查任务
-
-        检查代码质量并提供改进建议
-        """
-        context = context or {}
-
-        # 先使用工具进行自动分析
-        tool_analysis = await self._analyze_with_tools(context)
-
-        system_prompt = self._build_system_prompt()
-        user_prompt = self._build_user_prompt(task, context, tool_analysis)
-
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
-        ]
-
-        response_content = await self._call_llm(messages)
-
-        # 解析审查结果
-        review_result = self._parse_review(response_content)
-
-        # 合并工具分析结果
-        if tool_analysis:
-            review_result["tool_analysis"] = tool_analysis
-
-        self.add_message(Message(
-            role="assistant",
-            content=response_content,
-            metadata={"task": task, "phase": "review"}
-        ))
-
-        return AgentResponse(
-            content=response_content,
-            actions=[
-                {"type": "review_completed", "result": review_result}
-            ],
-            metadata={
-                "phase": "review",
-                "review": review_result
-            }
-        )
 
     def _build_system_prompt(self) -> str:
-        """构建系统提示词"""
         return """你是一位资深代码审查专家，擅长发现代码问题并提供改进建议。
 
 审查维度：
@@ -83,6 +32,9 @@ class ReviewerAgent(BaseAgent):
 5. 安全性 - 潜在漏洞、输入验证
 6. 测试 - 测试覆盖率、测试质量
 
+你可以使用工具来分析代码结构、检查代码质量、搜索历史经验。
+在审查前，主动使用工具进行自动化分析，然后结合人工审查给出综合评价。
+
 **重要：首先检查代码完整性**
 - 检查所有 import 语句
 - 确认所有依赖模块都已提供
@@ -90,7 +42,7 @@ class ReviewerAgent(BaseAgent):
 
 请以 JSON 格式输出审查结果：
 {
-    "score": 85,  // 总分 0-100（缺少依赖文件扣 30 分）
+    "score": 85,
     "issues": [
         {
             "severity": "high/medium/low",
@@ -105,51 +57,7 @@ class ReviewerAgent(BaseAgent):
     "reasoning": "审查思路"
 }"""
 
-    async def _analyze_with_tools(self, context: Dict[str, Any]) -> Dict[str, Any]:
-        """使用工具进行自动分析"""
-        tool_results = {
-            "analysis": [],
-            "quality": [],
-            "completeness": []
-        }
-
-        code_files = context.get("code_files", [])
-
-        # 检查完整性
-        missing_deps = self._check_completeness(code_files)
-        if missing_deps:
-            tool_results["completeness"].append({
-                "issue": "缺少依赖文件",
-                "missing": list(missing_deps),
-                "severity": "high"
-            })
-
-        for file in code_files:
-            code = file.get("content", "")
-            file_path = file.get("path", "")
-
-            # 代码分析
-            if self.code_analyzer:
-                analysis = await self.code_analyzer.execute(code)
-                if analysis.success:
-                    tool_results["analysis"].append({
-                        "file": file_path,
-                        "result": analysis.output
-                    })
-
-            # 质量检查
-            if self.linter:
-                quality = await self.linter.execute(code)
-                if quality.success:
-                    tool_results["quality"].append({
-                        "file": file_path,
-                        "result": quality.output
-                    })
-
-        return tool_results
-
-    def _build_user_prompt(self, task: str, context: Dict[str, Any], tool_analysis: Dict[str, Any]) -> str:
-        """构建用户提示词"""
+    def _build_user_prompt(self, task: str, context: Dict[str, Any]) -> str:
         prompt = f"审查任务：\n{task}\n\n"
 
         if context.get("code_files"):
@@ -164,29 +72,17 @@ class ReviewerAgent(BaseAgent):
         if context.get("test_results"):
             prompt += f"\n测试结果：\n{json.dumps(context['test_results'], ensure_ascii=False, indent=2)}\n\n"
 
-        # 添加工具分析结果
-        if tool_analysis:
-            prompt += "\n自动分析结果：\n"
-
-            # 代码分析结果
-            if tool_analysis.get("analysis"):
-                prompt += "\n代码结构分析：\n"
-                for item in tool_analysis["analysis"]:
-                    prompt += f"- {item['file']}: {item['result'].get('summary', '')}\n"
-
-            # 质量检查结果
-            if tool_analysis.get("quality"):
-                prompt += "\n代码质量检查：\n"
-                for item in tool_analysis["quality"]:
-                    quality = item['result']
-                    prompt += f"- {item['file']}: {quality.get('summary', '')}\n"
-
-        prompt += "\n请结合自动分析结果进行全面的代码审查。"
-
+        prompt += "\n请进行全面的代码审查。"
         return prompt
 
+    def _parse_response(self, response: str) -> Dict[str, Any]:
+        review = self._parse_review(response)
+        return {
+            "actions": [{"type": "review_completed", "result": review}],
+            "metadata": {"review": review}
+        }
+
     def _parse_review(self, response: str) -> Dict[str, Any]:
-        """解析审查结果"""
         try:
             start = response.find("{")
             end = response.rfind("}") + 1
@@ -194,61 +90,6 @@ class ReviewerAgent(BaseAgent):
                 json_str = response[start:end]
                 return json.loads(json_str)
         except Exception as e:
-            print(f"解析审查结果失败: {e}")
+            print(f"  解析审查结果失败: {e}")
 
-        return {
-            "raw_response": response,
-            "score": 0,
-            "issues": []
-        }
-
-    def _check_completeness(self, code_files: List[Dict[str, str]]) -> set:
-        """检查代码完整性，返回缺失的模块"""
-        import re
-
-        # 收集所有文件路径
-        available_modules = set()
-        for file in code_files:
-            path = file.get("path", "")
-            if path.endswith(".py"):
-                module_name = path.replace(".py", "").replace("/", ".")
-                available_modules.add(module_name)
-                # 也添加不带路径的模块名
-                if "/" in path:
-                    simple_name = path.split("/")[-1].replace(".py", "")
-                    available_modules.add(simple_name)
-                else:
-                    available_modules.add(path.replace(".py", ""))
-
-        # 检查每个文件的 import
-        missing_modules = set()
-        standard_libs = {
-            'os', 'sys', 're', 'json', 'time', 'datetime', 'typing', 'pathlib',
-            'collections', 'itertools', 'functools', 'asyncio', 'unittest',
-            'sqlite3', 'hashlib', 'getpass', 'jwt', 'abc'
-        }
-        third_party_libs = {
-            'flask', 'werkzeug', 'marshmallow', 'sqlalchemy', 'pydantic',
-            'requests', 'numpy', 'pandas', 'pytest', 'flask_pyjwt', 'testfixtures',
-            'flask_testing'
-        }
-
-        for file in code_files:
-            content = file.get("content", "")
-
-            # 提取 from xxx import 和 import xxx
-            from_imports = re.findall(r'from\s+([a-zA-Z_][a-zA-Z0-9_]*)', content)
-            direct_imports = re.findall(r'^import\s+([a-zA-Z_][a-zA-Z0-9_]*)', content, re.MULTILINE)
-
-            all_imports = set(from_imports + direct_imports)
-
-            for imp in all_imports:
-                # 跳过标准库和第三方库
-                if imp in standard_libs or imp in third_party_libs:
-                    continue
-
-                # 检查是否在生成的文件中
-                if imp not in available_modules:
-                    missing_modules.add(imp)
-
-        return missing_modules
+        return {"raw_response": response, "score": 0, "issues": []}
